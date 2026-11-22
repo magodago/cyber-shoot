@@ -3,14 +3,14 @@
 // aéreas y terrestres; jefes cada 3 niveles; tienda entre niveles que se dispara.
 
 import * as THREE from 'three';
-import { Arena, PALETTES } from './arena.js?v=15';
-import { FX } from './fx.js?v=15';
-import { GameAudio } from './audio.js?v=15';
-import { WeaponSystem } from './weapon.js?v=15';
-import { makeEnemy, BoltField } from './enemies.js?v=15';
-import { Music } from './music.js?v=15';
-import { createCover } from './cover.js?v=15';
-import { createStory } from './story.js?v=15';
+import { Arena, PALETTES } from './arena.js?v=16';
+import { FX } from './fx.js?v=16';
+import { GameAudio } from './audio.js?v=16';
+import { WeaponSystem } from './weapon.js?v=16';
+import { makeEnemy, BoltField } from './enemies.js?v=16';
+import { Music } from './music.js?v=16';
+import { createCover } from './cover.js?v=16';
+import { createStory } from './story.js?v=16';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';

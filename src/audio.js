@@ -68,23 +68,51 @@ export class GameAudio {
   }
 
   // --- disparo ---
-  shot() {
+  // disparo real: crepitar seco, cuerpo que cae, golpe grave y rebote en
+  // las fachadas. `pitch` permite que cada pistola suene distinta.
+  shot(pitch = 1) {
     if (!this.ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
-    const n = this._noise(0.16);
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
-    bp.frequency.setValueAtTime(2600, t); bp.frequency.exponentialRampToValueAtTime(320, t + 0.13);
-    const g = ctx.createGain(); this._env(g, t, 0.75, 0.002, 0.13);
+    const p = pitch * (0.95 + Math.random() * 0.10);
+
+    // 1) detonación: ruido muy agudo y brevísimo, el "crack"
+    const crack = this._noise(0.06);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass';
+    hp.frequency.value = 2400 * p; hp.Q.value = 0.7;
+    const cg = ctx.createGain(); this._env(cg, t, 0.95, 0.0008, 0.05);
+    crack.connect(hp); hp.connect(cg); cg.connect(this.sfx);
+
+    // 2) cuerpo: banda que cae de 3 kHz a 250 Hz mientras se apaga
+    const n = this._noise(0.45);
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.15;
+    bp.frequency.setValueAtTime(3000 * p, t);
+    bp.frequency.exponentialRampToValueAtTime(250, t + 0.30);
+    const g = ctx.createGain(); this._env(g, t, 0.70, 0.002, 0.34);
     n.connect(bp); bp.connect(g); g.connect(this.sfx);
 
+    // 3) golpe grave: lo que se siente en el pecho
     const o = ctx.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.16);
-    const og = ctx.createGain(); this._env(og, t, 0.5, 0.003, 0.17);
+    o.frequency.setValueAtTime(118 * p, t);
+    o.frequency.exponentialRampToValueAtTime(41, t + 0.13);
+    const og = ctx.createGain(); this._env(og, t, 0.60, 0.002, 0.16);
     o.connect(og); og.connect(this.sfx); o.start(t); o.stop(t + 0.22);
 
-    const c = this._noise(0.04), hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3400;
-    const cg = ctx.createGain(); this._env(cg, t, 0.34, 0.001, 0.035);
-    c.connect(hp); hp.connect(cg); cg.connect(this.sfx);
+    // 4) rebote: la calle devuelve el estampido, más apagado y tarde
+    const tail = this._noise(0.7);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1900, t); lp.frequency.exponentialRampToValueAtTime(380, t + 0.5);
+    const dl = ctx.createDelay(0.6); dl.delayTime.value = 0.078;
+    const fb = ctx.createGain(); fb.gain.value = 0.26;
+    const tg = ctx.createGain(); this._env(tg, t, 0.16, 0.010, 0.46);
+    tail.connect(lp); lp.connect(dl); dl.connect(fb); fb.connect(dl);
+    dl.connect(tg); tg.connect(this.sfx);
+
+    // 5) mecánica: la corredera cicla justo después del disparo
+    const clk = this._noise(0.05);
+    const bp2 = ctx.createBiquadFilter(); bp2.type = 'bandpass';
+    bp2.frequency.value = 1800; bp2.Q.value = 2.2;
+    const cg2 = ctx.createGain(); this._env(cg2, t + 0.045, 0.16, 0.001, 0.045);
+    clk.connect(bp2); bp2.connect(cg2); cg2.connect(this.sfx);
   }
 
   dry() {

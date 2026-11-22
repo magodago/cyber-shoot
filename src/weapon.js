@@ -74,15 +74,19 @@ function plate(pts, w, bevel = 0.0016, hole = null) {
 }
 
 /** Pistola de servicio 1:1 (~19 cm). Empuñadura en el origen, cañón hacia -Z. */
-function buildPistol(accent, side = 1) {
+function buildPistol(accent, side = 1, finish = 'silver') {
   const g = new THREE.Group();
   const body = new THREE.Group();
   g.add(body);
 
-  const steel  = mat(0x3b424c, { metal: 0.72, rough: 0.34 });
-  const steelL = mat(0x6a7380, { metal: 0.80, rough: 0.22 });
-  const poly   = mat(0x1e2228, { metal: 0.04, rough: 0.72 });
-  const poly2  = mat(0x2a2f37, { metal: 0.04, rough: 0.60 });
+  // Dos acabados: la derecha en oro pulido y la izquierda en plata. El
+  // armazón sigue en polímero grafito para que el metal tenga contraste.
+  const gold = finish === 'gold';
+  const steel  = mat(gold ? 0xc99a3e : 0xc8d2df, { metal: 0.96, rough: gold ? 0.26 : 0.18 });
+  const steelL = mat(gold ? 0xf0cd7c : 0xf2f7ff, { metal: 1.00, rough: 0.09 });
+  const trim   = mat(gold ? 0x8d6425 : 0x8d98a6, { metal: 0.92, rough: 0.44 });
+  const poly   = mat(0x15181d, { metal: 0.06, rough: 0.74 });
+  const poly2  = mat(0x21262e, { metal: 0.06, rough: 0.62 });
   const dark   = mat(0x06070a, { metal: 0.25, rough: 0.52 });
   const neon   = mat(accent, { metal: 0.3, rough: 0.35, emis: accent, ei: 1.5 });
 
@@ -137,10 +141,40 @@ function buildPistol(accent, side = 1) {
   body.add(frame);
 
   for (let i = 0; i < 3; i++) {
-    const rib = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0026, 0.0034), dark);
+    const rib = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0026, 0.0034), trim);
     rib.position.set(0, -0.0214, -0.050 - i * 0.0072);
     body.add(rib);
   }
+  // --- detalles de arma de calidad: lomo pulido, incrustaciones y tornillos
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(0.0118, 0.0014, 0.138), steelL);
+  spine.position.set(0, 0.0219, 0.006);
+  body.add(spine);
+  for (const sx of [-1, 1]) {
+    // incrustación lateral pulida sobre la corredera
+    const inlay = new THREE.Mesh(new THREE.BoxGeometry(0.0010, 0.0092, 0.052), steelL);
+    inlay.position.set(sx * 0.0139, 0.0102, 0.028);
+    body.add(inlay);
+    // tres cortes de grabado en el frente de la corredera
+    for (let i = 0; i < 3; i++) {
+      const cut = new THREE.Mesh(new THREE.BoxGeometry(0.0011, 0.0135, 0.0030), trim);
+      cut.position.set(sx * 0.0139, 0.0072, -0.034 - i * 0.0085);
+      cut.rotation.x = -0.22;
+      body.add(cut);
+    }
+    // tornillos del armazón
+    for (const zz of [-0.030, 0.026]) {
+      const scr = new THREE.Mesh(new THREE.CylinderGeometry(0.0026, 0.0026, 0.0014, 12), trim);
+      scr.rotation.z = Math.PI / 2;
+      scr.position.set(sx * 0.0140, -0.0112, zz);
+      body.add(scr);
+    }
+  }
+  // bocallave de la aguja percutora, en metal mate
+  const pinHole = new THREE.Mesh(new THREE.CylinderGeometry(0.0021, 0.0021, 0.0012, 12), trim);
+  pinHole.rotation.z = Math.PI / 2;
+  pinHole.position.set(0, 0.0158, 0.0905);
+  body.add(pinHole);
+
   // retén de corredera (izq.) y liberación de cargador
   const stop = new THREE.Mesh(plate([
     [0.006, -0.0125], [0.040, -0.0125], [0.042, -0.0182], [0.006, -0.0196]
@@ -207,7 +241,7 @@ function buildPistol(accent, side = 1) {
   barrel.rotation.x = Math.PI / 2;
   barrel.position.set(0, 0.0042, -0.0975);
   body.add(barrel);
-  const crown = new THREE.Mesh(new THREE.TorusGeometry(0.0082, 0.0009, 8, 20), steel);
+  const crown = new THREE.Mesh(new THREE.TorusGeometry(0.0082, 0.0009, 8, 20), steelL);
   crown.position.set(0, 0.0042, -0.1058);
   body.add(crown);
   const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.0050, 0.0050, 0.020, 20, 1, true), dark);
@@ -226,22 +260,64 @@ function buildPistol(accent, side = 1) {
   muzzle.position.set(0, 0.0042, -0.108);
   body.add(muzzle);
 
-  const flash = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: TEX ? TEX.glow : null, color: accent, transparent: true, opacity: 0,
-    blending: THREE.AdditiveBlending, depthWrite: false
-  }));
-  flash.position.copy(muzzle.position);
-  flash.scale.setScalar(0.30);
-  body.add(flash);
+  // --- fogonazo: tres capas de fuego + pétalos y una luz que ilumina la calle
+  const glowTex = TEX ? TEX.glow : null;
+  const fireSprite = (color, scale) => {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
+    }));
+    sp.position.copy(muzzle.position);
+    sp.scale.setScalar(scale);
+    sp.visible = false;
+    body.add(sp);
+    return sp;
+  };
+  // halo exterior rojo-naranja, llama media naranja y núcleo amarillo
+  const flash = fireSprite(0xff4a08, 0.34);
+  const flashMid = fireSprite(0xff9c14, 0.22);
+  flashMid.position.z -= 0.008;
+  const flashCore = fireSprite(0xfff3b8, 0.12);
+  flashCore.position.z -= 0.016;
 
-  const flashCore = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: TEX ? TEX.glow : null, color: 0xfff4de, transparent: true, opacity: 0,
+  // pétalos de llama que salen hacia delante desde la boca del cañón
+  const petals = new THREE.Group();
+  petals.position.copy(muzzle.position);
+  petals.visible = false;
+  body.add(petals);
+  const petalGeo = new THREE.ConeGeometry(0.0135, 0.082, 5, 1, true);
+  petalGeo.translate(0, 0.041, 0);
+  petalGeo.rotateX(-Math.PI / 2);
+  const petalMat = new THREE.MeshBasicMaterial({
+    color: 0xff8a1e, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  for (let i = 0; i < 5; i++) {
+    const pt = new THREE.Mesh(petalGeo, petalMat);
+    const a = (i / 5) * Math.PI * 2;
+    pt.rotation.z = a;
+    pt.rotation.x = (i % 2 ? 1 : -1) * 0.16;
+    pt.scale.set(0.85, 0.75 + Math.random() * 0.5, 1);
+    petals.add(pt);
+  }
+  // chispas de pólvora que escapan de la boca
+  const sparks = new THREE.Group();
+  sparks.position.copy(muzzle.position);
+  sparks.visible = false;
+  body.add(sparks);
+  const sparkMat = new THREE.MeshBasicMaterial({
+    color: 0xffd27a, transparent: true, opacity: 0.95,
     blending: THREE.AdditiveBlending, depthWrite: false
-  }));
-  flashCore.position.copy(muzzle.position);
-  flashCore.position.z -= 0.05;
-  flashCore.scale.set(0.13, 0.30, 1);
-  body.add(flashCore);
+  });
+  for (let i = 0; i < 6; i++) {
+    const sp = new THREE.Mesh(new THREE.SphereGeometry(0.0022, 5, 4), sparkMat);
+    sp.position.set((Math.random() - 0.5) * 0.03, (Math.random() - 0.5) * 0.03, -0.02 - Math.random() * 0.05);
+    sparks.add(sp);
+  }
+  // luz real: el fogonazo alumbra el arma y el suelo durante un instante
+  const flashLight = new THREE.PointLight(0xff7a18, 0, 3.4, 2);
+  flashLight.position.copy(muzzle.position);
+  body.add(flashLight);
 
   // indicador de munición: arco fino pegado a la base del cargador
   const ammoRing = new THREE.Mesh(
@@ -256,7 +332,7 @@ function buildPistol(accent, side = 1) {
   body.position.set(0, 0.062, 0.004);
   g.scale.setScalar(1.15);
 
-  return { group: g, muzzle, flash, flashCore, ammoRing };
+  return { group: g, muzzle, flash, flashMid, flashCore, petals, sparks, flashLight, ammoRing };
 }
 
 export class WeaponSystem {
@@ -277,7 +353,8 @@ export class WeaponSystem {
     this.hands = {};
     for (const hand of ['L', 'R']) {
       const accent = hand === 'R' ? GUN_COL.neonA : GUN_COL.neonB;
-      const built = buildPistol(accent, hand === 'R' ? 1 : -1);
+      // derecha en oro, izquierda en plata (dos piezas distintas en la mano)
+      const built = buildPistol(accent, hand === 'R' ? 1 : -1, hand === 'R' ? 'gold' : 'silver');
       scene.add(built.group);
       this.hands[hand] = {
         hand,
@@ -426,7 +503,7 @@ export class WeaponSystem {
     h.ammo--;
     h.cool = this.fireDelay;
     h.kick = 1;
-    h.flashT = 0.055;
+    h.flashT = 0.075;
     h.shots++;
 
     const origin = h.muzzle.getWorldPosition(new THREE.Vector3());
@@ -445,7 +522,7 @@ export class WeaponSystem {
     const end = res ? res.point : origin.clone().addScaledVector(dir, 45);
 
     this.spawnTracer(origin, end, h.accent);
-    if (this.audio && this.audio.shot) this.audio.shot();
+    if (this.audio && this.audio.shot) this.audio.shot(hand === 'R' ? 1 : 0.92);
     if (this.fx) this.fx.spark(origin, h.accent, 3, 2.0, 0.22, 0.07);
     this.haptic(h, 0.55, 40);
     this.onShot(hand, h, res);
@@ -653,10 +730,32 @@ export class WeaponSystem {
         h.group.rotateX(h.kick * 0.16);
       }
 
-      h.flash.material.opacity = h.flashT > 0 ? 0.8 : 0;
-      h.flash.scale.setScalar(0.42 + Math.random() * 0.3);
-      h.flashCore.material.opacity = h.flashT > 0 ? 0.95 : 0;
-      h.flashCore.scale.set(0.24 + Math.random() * 0.16, 0.5 + Math.random() * 0.3, 1);
+      const lit = h.flashT > 0;
+      const k = lit ? h.flashT / 0.055 : 0;
+      h.flash.visible = h.flashMid.visible = h.flashCore.visible = lit;
+      h.petals.visible = h.sparks.visible = lit;
+      if (lit) {
+        // halo exterior rojo-naranja que se abre al disparar
+        h.flash.material.opacity = 0.55 + 0.35 * k;
+        h.flash.scale.setScalar(0.26 + (1 - k) * 0.16 + Math.random() * 0.05);
+        // llama media naranja
+        h.flashMid.material.opacity = 0.80;
+        h.flashMid.scale.set(0.17 + Math.random() * 0.05, 0.21 + Math.random() * 0.06, 1);
+        // núcleo amarillo-blanco alargado en la dirección del cañón
+        h.flashCore.material.opacity = 1;
+        h.flashCore.scale.set(0.085 + Math.random() * 0.03, 0.17 + (1 - k) * 0.10, 1);
+        // pétalos: giran y respiran en cada disparo
+        h.petals.rotation.z = Math.random() * Math.PI * 2;
+        const ps = 0.8 + Math.random() * 0.45;
+        h.petals.scale.set(ps, ps, 0.75 + Math.random() * 0.7);
+        h.sparks.rotation.z = Math.random() * Math.PI;
+        h.flashLight.intensity = 5.5 * k + 2.5;
+      } else {
+        h.flash.material.opacity = 0;
+        h.flashMid.material.opacity = 0;
+        h.flashCore.material.opacity = 0;
+        h.flashLight.intensity = Math.max(0, h.flashLight.intensity - dt * 120);
+      }
 
       const frac = h.ammo / this.magSize;
       const col = frac > 0.5 ? 0x5cff9d : frac > 0.22 ? 0xffe066 : 0xff2d55;
