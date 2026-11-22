@@ -704,8 +704,8 @@ export function createStory(scene, camera) {
   const INSET_W = Math.round(W * 0.30);
   const CAP_X = M + INSET_W + 16;
   const CAP_W = W - M - CAP_X;
-  const CAP_FONT = `600 31px ${BODY}`;
-  const CAP_LH = 42;
+  const CAP_FONT = `600 36px ${BODY}`;
+  const CAP_LH = 46;
   const CAP_PAD = 36;
 
   const page = document.createElement('canvas');
@@ -1111,7 +1111,7 @@ export function createStory(scene, camera) {
 
     // barra de avance
     const reveal = total / speed;
-    const hold = Math.max(2.2, Math.min(6.5, total * 0.036));
+    const hold = Math.max(4.5, Math.min(13, total * 0.05));
     const prog = clamp(T / (reveal + hold), 0, 1);
     ctx.save();
     ctx.fillStyle = 'rgba(16,16,24,0.16)';
@@ -1154,6 +1154,36 @@ export function createStory(scene, camera) {
     else if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   }
 
+  /* ------------------------------------------------------------- anclaje 3D */
+  // La viñeta se coloca UNA vez delante del jugador y se queda en el mundo:
+  // antes seguía a la cabeza cada frame y a 2 m era ilegible (y mareaba).
+  let anchor = false;
+  const qTmp = new THREE.Quaternion();
+
+  function placePanel() {
+    const p = new THREE.Vector3();
+    camera.getWorldPosition(p);
+    const q = camera.getWorldQuaternion(new THREE.Quaternion());
+    const gaze = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    let fx = gaze.x, fz = gaze.z;
+    const fl = Math.hypot(fx, fz) || 1;
+    fx /= fl; fz /= fl;
+    // A 5 m y 26º de alto la página se lee como un cartel en la pared. Antes
+    // estaba a 3,2 m y ocupaba 44ºx76º: se comía todo el campo de visión, se
+    // veía como si estuviera pegada a la cara y no había forma de leerla.
+    const D = 5.0;
+    group.position.set(p.x + fx * D, p.y + 0.02, p.z + fz * D);
+    group.lookAt(p.x, p.y - 0.06, p.z);   // de pie, no inclinada con la cabeza
+
+    // tamaño por ángulo, no por frame: 26º de alto y 46º de ancho como máximo
+    const tanV = Math.tan(13 * Math.PI / 180) * 2 * D;
+    const tanH = Math.tan(23 * Math.PI / 180) * 2 * D;
+    let hh = tanV, ww = hh * W / H;
+    if (ww > tanH) { ww = tanH; hh = ww * H / W; }
+    plane.scale.set(ww, hh, 1);
+    anchor = true;
+  }
+
   return {
     group,
     get playing() { return group.visible; },
@@ -1162,6 +1192,7 @@ export function createStory(scene, camera) {
       onDone = done || null;
       if (!panels.length) { if (onDone) onDone(); return; }
       group.visible = true;
+      anchor = false;
       start(0);
     },
     skip() {
@@ -1179,36 +1210,28 @@ export function createStory(scene, camera) {
       if (!group.visible) return;
       t += dt;
 
-      // anclar delante de la cabeza, sin heredar su rotación
       const p = new THREE.Vector3();
       camera.getWorldPosition(p);
-      const q = camera.getWorldQuaternion(new THREE.Quaternion());
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-      dir.y *= 0.25;
-      dir.normalize();
-      group.position.copy(p).addScaledVector(dir, 2.05);
-      group.position.y -= 0.05;
-      group.lookAt(p);
 
-      // tamaño: ocupa el 88 % del alto visible (y como mucho el 94 % del ancho)
-      const fov = camera.fov * Math.PI / 180;
-      const vh = 2 * 2.05 * Math.tan(fov / 2);
-      const vw = vh * camera.aspect;
-      let hh = vh * 0.88, ww = hh * W / H;
-      if (ww > vw * 0.94) { ww = vw * 0.94; hh = ww * H / W; }
-      plane.scale.set(ww, hh, 1);
-      // vida propia: la página se balancea y respira delante de la cámara
-      const pop = 0.93 + 0.07 * ease(Math.min(1, t / 0.45));
-      plane.scale.set(ww * pop, hh * pop, 1);
-      plane.rotation.z = Math.sin(t * 0.55) * 0.008;
-      plane.rotation.y = Math.sin(t * 0.42) * 0.06;
-      plane.rotation.x = Math.cos(t * 0.5) * 0.022;
-      plane.position.z = Math.sin(t * 0.8) * 0.025;
+      // anclaje fijo en el mundo: NO se recoloca al girar la cabeza, solo si la
+      // dejas a la espalda o te alejas tanto que ya no la leerías
+      if (!anchor) placePanel();
+      const gz = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(qTmp));
+      const flat = new THREE.Vector3(gz.x, 0, gz.z);
+      if (flat.lengthSq() > 1e-4) flat.normalize();
+      const toP = new THREE.Vector3().subVectors(group.position, p);
+      toP.y = 0;
+      const distP = toP.length();
+      if (distP > 1e-4 && (toP.normalize().dot(flat) < -0.3 || distP > 9 || distP < 2.4)) placePanel();
+
+      // vida propia mínima: se mece como una pantalla colgada, no sigue la cabeza
+      plane.rotation.z = Math.sin(t * 0.5) * 0.004;
 
       renderPanel();
 
       const revealTime = total / 68;
-      const hold = Math.max(2.2, Math.min(6.5, total * 0.036));
+      // tiempo de lectura de verdad (antes pasaba demasiado rápido)
+      const hold = Math.max(4.5, Math.min(13, total * 0.05));
       if (t > revealTime + hold) next();
     }
   };

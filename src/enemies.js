@@ -325,7 +325,7 @@ export class Enemy {
 // ---------------------------------------------------------------------- dron
 export class Drone extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0x1a2230, 0.9, 0.28));
+    const body = this._mat(stdMat(0xdfe7f0, 1.0, 0.2));
     const accent = neonMat(this.color);
 
     const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), body);
@@ -557,8 +557,8 @@ export class Hound extends Enemy {
 // ------------------------------------------------------------------ centinela
 export class Sentry extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0x1d2532, 0.9, 0.32));
-    const dark = this._mat(stdMat(0x0d1219, 0.85, 0.42));
+    const body = this._mat(stdMat(0xffc24a, 1.0, 0.24));
+    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.32));
     const accent = neonMat(this.color);
 
     for (const s of [-1, 1]) {
@@ -634,9 +634,9 @@ export class Boss extends Enemy {
   }
 
   _build() {
-    const shell = this._mat(stdMat(0x3a4763, 0.62, 0.55));
-    const plate = this._mat(stdMat(0x1c2537, 0.85, 0.42));
-    const dark = this._mat(stdMat(0x0b1018, 0.9, 0.35));
+    const shell = this._mat(stdMat(0xdfe7f0, 1.0, 0.22));
+    const plate = this._mat(stdMat(0xe0a233, 1.0, 0.3));
+    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.34));
     const accent = neonMat(0xff2d55);
     const trim = neonMat(0xff9f43);
     const cool = neonMat(0x49e6ff);
@@ -1013,8 +1013,8 @@ export class BoltField {
 // ------------------------------------------------------------------ avispa
 export class Wasp extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0x241a2e, 0.75, 0.4));
-    const dark = this._mat(stdMat(0x120c18, 0.7, 0.5));
+    const body = this._mat(stdMat(0xffc24a, 1.0, 0.26));
+    const dark = this._mat(stdMat(0xaab6c6, 0.9, 0.36));
 
     const thorax = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.26, 4, 8), body);
     thorax.rotation.x = Math.PI / 2;
@@ -1096,8 +1096,8 @@ export class Wasp extends Enemy {
 // ------------------------------------------------------------------ torreta de azotea
 export class Turret extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0x232c3a, 0.85, 0.32));
-    const dark = this._mat(stdMat(0x0d1219, 0.9, 0.4));
+    const body = this._mat(stdMat(0xdfe7f0, 1.0, 0.24));
+    const dark = this._mat(stdMat(0xe0a233, 0.95, 0.34));
     const accent = neonMat(this.color);
 
     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.52, 0.22, 8), dark);
@@ -1169,8 +1169,8 @@ export class Sniper extends Enemy {
   _build() {
     // Contraste alto a propósito: es el enemigo más lejano del juego y se lee
     // contra fachada oscura. Cuerpo azul-gris claro + tiras de neón verticales.
-    const body = this._mat(stdMat(0x41586f, 0.55, 0.28));
-    const dark = this._mat(stdMat(0x18222e, 0.75, 0.4));
+    const body = this._mat(stdMat(0xffc24a, 1.0, 0.22));
+    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.36));
     const accent = neonMat(this.color);
 
     for (const s of [-1, 1]) {
@@ -1292,8 +1292,8 @@ export class Sniper extends Enemy {
 // ------------------------------------------------------------------ araña suicida
 export class Crawler extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0x2a1a22, 0.8, 0.38));
-    const dark = this._mat(stdMat(0x120b10, 0.85, 0.45));
+    const body = this._mat(stdMat(0xe0a233, 1.0, 0.28));
+    const dark = this._mat(stdMat(0xaab6c6, 0.9, 0.4));
     const accent = neonMat(this.color);
 
     const shell = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), body);

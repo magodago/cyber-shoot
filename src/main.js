@@ -61,6 +61,31 @@ const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerH
 camera.position.set(0, 1.62, 0);
 scene.add(camera);
 
+/* entorno de reflejos: sin environment, el metal de los enemigos sale negro.
+   Gradiente simple (cielo azul / suelo violeta) convertido a PMREM: los cuerpos
+   oro y plata tienen algo que reflejar y se recortan contra el fondo. */
+{
+  const ecv = document.createElement('canvas');
+  ecv.width = 64; ecv.height = 32;
+  const ec = ecv.getContext('2d');
+  const eg = ec.createLinearGradient(0, 0, 0, 32);
+  eg.addColorStop(0.0, '#2c4f7c');
+  eg.addColorStop(0.42, '#16263f');
+  eg.addColorStop(0.52, '#3a1f46');
+  eg.addColorStop(1.0, '#06070c');
+  ec.fillStyle = eg;
+  ec.fillRect(0, 0, 64, 32);
+  const envTex = new THREE.CanvasTexture(ecv);
+  envTex.mapping = THREE.EquirectangularReflectionMapping;
+  envTex.colorSpace = THREE.SRGBColorSpace;
+  const pm = new THREE.PMREMGenerator(renderer);
+  pm.compileEquirectangularShader();
+  scene.environment = pm.fromEquirectangular(envTex).texture;
+  scene.environmentIntensity = 0.9;
+  envTex.dispose();
+  pm.dispose();
+}
+
 const rig = new THREE.Group();     // solo para giro de escritorio
 rig.add(camera);
 scene.add(rig);
@@ -196,7 +221,10 @@ function assistShot(origin, dir) {
     v.sub(origin);
     const t = v.dot(dir);
     if (t < 3 || t > 48) continue;
-    const rad = (e.def && e.def.radius ? e.def.radius : 0.62) + 0.75 + t * 0.012;
+    // tolerancia real: el rayo tiene que pasar rozando la silueta, no "cerca".
+    // Antes era radius + 0.75 + t*0.012 (a 20 m, 1,6 m de radio: disparabas al
+    // aire al lado y contaba). Ahora el margen es de mano, no de enemigo entero.
+    const rad = (e.def && e.def.radius ? e.def.radius : 0.62) * 0.9 + 0.07 + t * 0.0025;
     const off = v.clone().addScaledVector(dir, -t).length();
     if (off > rad) continue;
     if (t < bestT) { bestT = t; best = { e, point: origin.clone().addScaledVector(dir, t) }; }
@@ -533,19 +561,26 @@ function pickKind(level) {
 function buildLevel(level) {
   // Campaña: 5 sectores normales y el sexto con el jefe titán.
   const bossLevel = level >= LEVELS;
-  const n = bossLevel ? 3 : 3;
   waves = [];
+
+  // NIVEL DEL TITÁN: una sola oleada y el titán el primero de la cola.
+  // Antes el jefe salía en la tercera oleada, después de ~25 enemigos: parecía
+  // que el nivel no arrancaba y que el titán no existía.
+  if (bossLevel) {
+    waves.push({ list: ['turret', 'sniper', 'drone', 'wasp', 'hound'], boss: true });
+    return;
+  }
+
+  const n = 3;
   for (let w = 0; w < n; w++) {
-    const isBoss = bossLevel && w === n - 1;
-    const count = isBoss ? 4 : Math.round(5 + level * 1.1 + w * 1.2);
+    const count = Math.round(5 + level * 1.1 + w * 1.2);
     const list = [];
-    for (let i = 0; i < count; i++) list.push(pickKind(isBoss ? 3 : level));
+    for (let i = 0; i < count; i++) list.push(pickKind(level));
     // variedad forzada: siempre algo aéreo y algo de azotea, francotirador desde el 2
     if (!list.some(k => k === 'drone' || k === 'wasp')) list.push('wasp');
     if (!list.some(k => k === 'turret')) list.push('turret');
-    if (level >= 2 && !isBoss && list.length < 6) list.push('sniper');
-    if (isBoss) { list.push('turret', 'sniper'); }
-    waves.push({ list, boss: isBoss });
+    if (level >= 2 && list.length < 6) list.push('sniper');
+    waves.push({ list, boss: false });
   }
 }
 
@@ -796,8 +831,16 @@ function closeShop() {
   const next = S.level + 1;
   const intro = levelIntro(next);
   startLevel(next);
-  // el sector del titán se presenta con su propia viñeta
-  if (intro) playStory(intro, null);
+  // el sector del titán se presenta con su propia viñeta; al cerrarla hay que
+  // devolver el control (con done=null el modo se quedaba en 'story' y el
+  // titán no llegaba a salir nunca)
+  if (intro) {
+    playStory(intro, () => {
+      S.mode = 'playing';
+      weapon.enabled = true;
+      updateHud(true);
+    });
+  }
 }
 
 function victory() {
@@ -878,9 +921,31 @@ function readVRInput(dt) {
 }
 
 
+let frameErrShown = false;
 function frame(time, xrFrame) {
+  // Red de seguridad: un fallo en un fotograma (un enemigo raro, una malla sin
+  // datos) mataba el bucle y dejaba el visor congelado con el escenario montado
+  // y las armas inertes. Ahora se registra y el juego sigue vivo.
+  try {
+    frameBody(time, xrFrame);
+  } catch (err) {
+    if (!frameErrShown) {
+      frameErrShown = true;
+      console.error('[cyber-shoot] error en el bucle:', err);
+    }
+    S.mode = 'playing';
+    weapon.enabled = true;
+  }
+}
+
+function frameBody(time, xrFrame) {
   const dt = Math.min(0.05, clock.getDelta());
   t += dt;
+  S.frames = (S.frames | 0) + 1;   // latido: sirve para saber si el bucle vive
+
+  // Autocuración del modo: si quedó en 'story' sin historia en pantalla, estaba
+  // congelado (armas sin disparar). Vuelve a jugar.
+  if (S.mode === 'story' && !story.playing) { S.mode = 'playing'; weapon.enabled = true; }
 
   // avance continuo: el jugador va calle adelante y los enemigos salen delante
   if (S.mode === 'playing') {
@@ -948,6 +1013,12 @@ function frame(time, xrFrame) {
 
   hudT -= dt;
   if (hudT <= 0) { hudT = 0.1; updateHud(); }
+
+  // la viñeta roja de daño se apaga sola (en el visor no hay DOM que lo haga)
+  if (hitFlash.mat.opacity > 0) {
+    hitFlash.mat.opacity = Math.max(0, hitFlash.mat.opacity - dt * 1.9);
+    if (hitFlash.mat.opacity === 0) hitFlash.sp.visible = false;
+  }
 
   if (!renderer.xr.isPresenting) {
     applyShake(dt);
@@ -1019,72 +1090,116 @@ function hudDry(hand) {
 
 function flashHit() {
   const f = $('#hitflash');
-  if (!f) return;
-  f.style.opacity = '0.85';
-  setTimeout(() => { f.style.opacity = '0'; }, 90);
+  if (f) {
+    f.style.opacity = '0.85';
+    setTimeout(() => { f.style.opacity = '0'; }, 90);
+  }
+  // en el visor el DOM no se ve: el "te han dado" va en 3D
+  if (hitFlash) {
+    hitFlash.sp.visible = true;
+    hitFlash.mat.opacity = 0.95;
+  }
+  updateWorldHud();
 }
 
 /* ------------------------------------------------------------------ HUD mundo (VR) */
 const worldHud = (() => {
   const cv = document.createElement('canvas');
-  cv.width = 512; cv.height = 160;
+  cv.width = 640; cv.height = 200;
   const ctx = cv.getContext('2d');
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false, opacity: 0.92 });
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, opacity: 0.94 });
   const sp = new THREE.Sprite(mat);
-  sp.scale.set(0.46, 0.144, 1);
-  sp.position.set(0, -0.34, -0.95);
+  sp.scale.set(0.64, 0.20, 1);
+  sp.position.set(0, -0.30, -0.95);
+  sp.renderOrder = 990;
   sp.visible = false;
   camera.add(sp);
   return { cv, ctx, tex, sp, mat };
 })();
 
+// aviso de "te están dando": viñeta roja pegada a la vista, solo en el visor
+const hitFlash = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 52, 128, 128, 128);
+  g.addColorStop(0, 'rgba(255,0,60,0)');
+  g.addColorStop(0.55, 'rgba(255,0,60,0.14)');
+  g.addColorStop(0.82, 'rgba(255,0,60,0.55)');
+  g.addColorStop(1, 'rgba(255,0,60,0.95)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, opacity: 0 });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(1.85, 1.85, 1);
+  sp.position.set(0, 0, -1.25);
+  sp.renderOrder = 995;
+  sp.visible = false;
+  camera.add(sp);
+  return { cv, tex, sp, mat };
+})();
+
 function updateWorldHud() {
   if (!renderer.xr.isPresenting) return;
-  const { ctx: c, cv, tex } = worldHud;
+  const { ctx: c, cv, tex, sp } = worldHud;
+  if (!sp.visible) sp.visible = true;
   c.clearRect(0, 0, cv.width, cv.height);
-  c.fillStyle = 'rgba(4,8,18,0.55)';
-  roundRect(c, 4, 4, 504, 152, 18); c.fill();
-  c.strokeStyle = 'rgba(73,230,255,0.6)'; c.lineWidth = 3; c.stroke();
+  c.fillStyle = 'rgba(4,8,18,0.62)';
+  roundRect(c, 4, 4, cv.width - 8, cv.height - 8, 22); c.fill();
+  c.strokeStyle = 'rgba(73,230,255,0.55)'; c.lineWidth = 3; c.stroke();
 
-  // vida
+  /* --- vidas: barra + número grande, con etiqueta --- */
   const hp = clamp(S.health / S.maxHealth, 0, 1);
-  c.fillStyle = 'rgba(255,255,255,0.14)';
-  c.fillRect(24, 30, 300, 20);
-  c.fillStyle = hp > 0.5 ? '#49e6ff' : hp > 0.25 ? '#ff9f43' : '#ff2d55';
-  c.fillRect(24, 30, 300 * hp, 20);
-
-  c.font = '800 30px Inter, system-ui, sans-serif';
-  c.textAlign = 'left';
-  c.fillStyle = '#ffffff';
-  c.fillText(S.credits + ' cr', 24, 96);
-  c.textAlign = 'right';
-  c.fillText(S.score.toLocaleString('es-ES'), 488, 96);
-
-  // balas
+  const hpCol = hp > 0.5 ? '#49e6ff' : hp > 0.25 ? '#ff9f43' : '#ff2d55';
   c.textAlign = 'left';
   c.font = '700 24px Inter, system-ui, sans-serif';
+  c.fillStyle = hpCol;
+  c.fillText('VIDAS', 26, 56);
+  c.fillStyle = 'rgba(255,255,255,0.14)';
+  c.fillRect(116, 30, 300, 32);
+  c.fillStyle = hpCol;
+  c.fillRect(116, 30, 300 * hp, 32);
+  c.font = '800 40px Inter, system-ui, sans-serif';
+  c.fillStyle = '#ffffff';
+  c.fillText(String(Math.ceil(S.health)), 432, 62);
+  const hw = c.measureText(String(Math.ceil(S.health))).width;
+  c.font = '700 22px Inter, system-ui, sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.55)';
+  c.fillText('/ ' + S.maxHealth, 432 + hw + 6, 60);
+
+  /* --- créditos · nivel/oleada · puntos --- */
+  c.textAlign = 'left';
+  c.font = '700 24px Inter, system-ui, sans-serif';
+  c.fillStyle = '#ffd166';
+  c.fillText(S.credits + ' cr', 26, 112);
+  c.textAlign = 'center';
+  c.font = '700 22px Inter, system-ui, sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.82)';
+  c.fillText('NIVEL ' + S.level + ' · OLEADA ' + Math.min(S.waveIndex + 1, Math.max(1, waves.length)) + '/' + waves.length, 320, 112);
+  c.textAlign = 'right';
+  c.fillStyle = '#ffffff';
+  c.fillText(S.score.toLocaleString('es-ES'), 614, 112);
+
+  /* --- cargadores --- */
+  c.textAlign = 'left';
+  c.font = '800 28px Inter, system-ui, sans-serif';
   c.fillStyle = '#49e6ff';
-  c.fillText('L ' + (weapon.hands.L.reloading ? '···' : weapon.hands.L.ammo), 24, 136);
+  c.fillText((weapon.hands.L.reloading ? '···' : weapon.hands.L.ammo) + '  L', 26, 158);
   c.textAlign = 'right';
   c.fillStyle = '#ff4fd8';
-  c.fillText((weapon.hands.R.reloading ? '···' : weapon.hands.R.ammo) + ' R', 488, 136);
+  c.fillText('R  ' + (weapon.hands.R.reloading ? '···' : weapon.hands.R.ammo), 614, 158);
 
+  /* --- diagnóstico mandos --- */
+  const mL = weapon.hands.L.held, mR = weapon.hands.R.held;
   c.textAlign = 'center';
-  c.fillStyle = 'rgba(255,255,255,0.7)';
-  c.font = '600 22px Inter, system-ui, sans-serif';
-  c.fillText('NIVEL ' + S.level + ' · OLEADA ' + Math.min(S.waveIndex + 1, Math.max(1, waves.length)) + '/' + waves.length, 256, 136);
-
-  if (renderer.xr.isPresenting) {
-    // diagnóstico en el visor: mandos detectados y armas enganchadas
-    const mL = weapon.hands.L.held, mR = weapon.hands.R.held;
-    c.textAlign = 'center';
-    c.font = '700 20px Inter, system-ui, sans-serif';
-    c.fillStyle = (mL && mR) ? '#5cff9d' : '#ff9f43';
-    c.fillText('VR MANDOS ' + (weapon.hands.L.controller ? 'L' : '·') + (weapon.hands.R.controller ? 'R' : '·') +
-      ' ARMAS ' + (mL ? 'L' : '·') + (mR ? 'R' : '·'), 256, 64);
-  }
+  c.font = '700 20px Inter, system-ui, sans-serif';
+  c.fillStyle = (mL && mR) ? '#5cff9d' : '#ff9f43';
+  c.fillText('MANDOS ' + (weapon.hands.L.controller ? 'L' : '·') + (weapon.hands.R.controller ? 'R' : '·') +
+    ' · ARMAS ' + (mL ? 'L' : '·') + (mR ? 'R' : '·'), 320, 188);
 
   tex.needsUpdate = true;
 }
@@ -1267,7 +1382,12 @@ function startCampaign() {
   hideOverlay();
   resetRun();
   cover.show(false);
-  playStory(STORY_INTRO, () => startLevel(1));
+  // Atajo de pruebas: ?level=6 arranca directo en el nivel del titán (y en VR
+  // también sirve, porque la URL es la misma). Sin atajo, campaña normal.
+  const q = new URLSearchParams(location.search);
+  const start = Math.max(1, Math.min(LEVELS, parseInt(q.get('level') || '1', 10) || 1));
+  if (start > 1) { weapon.enabled = true; startLevel(start); }
+  else playStory(STORY_INTRO, () => startLevel(1));
 }
 
 /* ------------------------------------------------------------------ arranque */
@@ -1279,6 +1399,11 @@ function boot() {
   initXR();
   renderer.setAnimationLoop(frame);
   showCover();
+  // Sonda de pruebas: con ?debug expone el estado del juego para poder
+  // comprobarlo desde fuera (nivel, enemigos, jefe, modo, armas).
+  if (new URLSearchParams(location.search).has('debug')) {
+    window.__cs = { S, enemies, startLevel, spawnOne, weapon, story, camera };
+  }
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;

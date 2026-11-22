@@ -120,7 +120,7 @@
 }
 </script>
 </head>
-<body>
+<body class="on-cover">
   <div id="hud">
     <div class="scorebar">
       <div><div class="lbl">PUNTOS</div><div class="val" id="score">0</div></div>
@@ -144,7 +144,7 @@
 
   <div id="hitflash"></div>
 
-  <div id="overlay">
+  <div id="overlay" class="cover">
     <div class="card">
       <div class="kicker">NEOLABS // ARCADE</div>
       <h1 id="ov-title">CYBER SHOOT</h1>
@@ -154,6 +154,16 @@
     </div>
   </div>
 
+<script>
+    // Red de seguridad: guarda el último error para poder diagnosticarlo desde
+    // fuera (y que un fallo en un frame no se lleve por delante la partida).
+    window.addEventListener('error', function (e) {
+      window.__err = (e.message || 'error') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || 0) + ':' + (e.colno || 0);
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      window.__err = 'promise: ' + (e.reason && e.reason.message || e.reason);
+    });
+  </script>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
