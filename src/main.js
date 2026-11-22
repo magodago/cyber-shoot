@@ -3,14 +3,14 @@
 // aéreas y terrestres; jefes cada 3 niveles; tienda entre niveles que se dispara.
 
 import * as THREE from 'three';
-import { Arena, PALETTES } from './arena.js?v=13';
-import { FX } from './fx.js?v=13';
-import { GameAudio } from './audio.js?v=13';
-import { WeaponSystem } from './weapon.js?v=13';
-import { makeEnemy, BoltField } from './enemies.js?v=13';
-import { Music } from './music.js?v=13';
-import { createCover } from './cover.js?v=13';
-import { createStory } from './story.js?v=13';
+import { Arena, PALETTES } from './arena.js?v=14';
+import { FX } from './fx.js?v=14';
+import { GameAudio } from './audio.js?v=14';
+import { WeaponSystem } from './weapon.js?v=14';
+import { makeEnemy, BoltField } from './enemies.js?v=14';
+import { Music } from './music.js?v=14';
+import { createCover } from './cover.js?v=14';
+import { createStory } from './story.js?v=14';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -40,7 +40,7 @@ const S = {
   boss: null,
   shots: 0,
   hits: 0,
-  up: { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0 }
+  up: { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0, med: 0 }
 };
 
 const LEVELS = 6;   // 5 sectores de campaña + el del jefe titán
@@ -234,17 +234,21 @@ function assistShot(origin, dir) {
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (!e || e.dead || !e.hitMeshes || !e.hitMeshes.length) continue;
-    e.hitMeshes[0].getWorldPosition(v);
-    v.sub(origin);
-    const t = v.dot(dir);
-    if (t < 3 || t > 48) continue;
-    // tolerancia real: el rayo tiene que pasar rozando la silueta, no "cerca".
-    // Antes era radius + 0.75 + t*0.012 (a 20 m, 1,6 m de radio: disparabas al
-    // aire al lado y contaba). Ahora el margen es de mano, no de enemigo entero.
-    const rad = (e.def && e.def.radius ? e.def.radius : 0.62) * 0.9 + 0.07 + t * 0.0025;
-    const off = v.clone().addScaledVector(dir, -t).length();
-    if (off > rad) continue;
-    if (t < bestT) { bestT = t; best = { e, point: origin.clone().addScaledVector(dir, t) }; }
+    // balcones, azoteas y francos lejanos: TODAS las hitboxes (cuerpo y
+    // cabeza), no solo la primera; si no, apuntar arriba nunca enganchaba
+    for (let j = 0; j < e.hitMeshes.length; j++) {
+      e.hitMeshes[j].getWorldPosition(v);
+      v.sub(origin);
+      const t = v.dot(dir);
+      if (t < 2.5 || t > 110) continue;
+      const base = (e.def && e.def.radius ? e.def.radius : 0.62);
+      // manga ancha sólo en el visor: a 30 m la mano tiembla más que el dedo
+      const rad = base * 1.1 + 0.42 + t * 0.011;
+      const off = v.clone().addScaledVector(dir, -t).length();
+      if (off > rad) continue;
+      if (t < bestT) { bestT = t; best = { e, point: origin.clone().addScaledVector(dir, t) }; }
+      break;
+    }
   }
   if (!best) return null;
   const falloff = bestT < 14 ? 1.4 : bestT < 26 ? 1.15 : 1;
@@ -340,7 +344,8 @@ class Panel {
     if (!t) return;
     if (this.mode === 'shop') {
       if (t.kind === 'next') { closeShop(); return; }
-      if (t.kind === 'card') buy(t.index);
+      if (t.kind === 'med') buyMed();
+      else if (t.kind === 'card') buy(t.index);
     } else if (this.mode === 'dead' || this.mode === 'win') {
       if (t.kind === 'next') restartRun();
     }
@@ -372,7 +377,7 @@ class Panel {
       c.font = '700 34px Inter, system-ui, sans-serif';
       c.fillStyle = '#ff4d6d';
       c.textAlign = 'center';
-      c.fillText(this.flashMsg, 512, 600);
+      c.fillText(this.flashMsg, 512, 620);
     }
     this.tex.needsUpdate = true;
   }
@@ -433,7 +438,30 @@ class Panel {
     });
 
     // siguiente
-    roundRect(c, 46, 466, 932, 128, 18);
+    // kit médico: barra propia encima de SIGUIENTE, no una séptima tarjeta
+    const mcost = medCost();
+    const mfull = S.health >= S.maxHealth;
+    const mok = !mfull && S.credits >= mcost;
+    roundRect(c, 46, 430, 932, 52, 14);
+    c.fillStyle = mfull ? 'rgba(255,255,255,0.05)' : mok ? 'rgba(92,255,157,0.14)' : 'rgba(255,45,85,0.08)';
+    c.fill();
+    c.strokeStyle = mfull ? 'rgba(255,255,255,0.18)' : mok ? 'rgba(92,255,157,0.85)' : 'rgba(255,45,85,0.55)';
+    c.lineWidth = 2.5;
+    c.stroke();
+    c.textAlign = 'left';
+    c.fillStyle = '#ffffff';
+    c.font = '800 25px Inter, system-ui, sans-serif';
+    c.fillText('KIT MÉDICO  +' + MEDKIT.heal + ' PV', 66, 464);
+    c.fillStyle = 'rgba(255,255,255,0.55)';
+    c.font = '500 19px Inter, system-ui, sans-serif';
+    c.fillText('VIDA ' + Math.max(0, Math.round(S.health)) + '/' + Math.round(S.maxHealth), 336, 463);
+    c.textAlign = 'right';
+    c.font = '800 25px Inter, system-ui, sans-serif';
+    c.fillStyle = mfull ? 'rgba(255,255,255,0.4)' : mok ? '#5cff9d' : '#ff4d6d';
+    c.fillText(mfull ? 'VIDA AL MÁXIMO' : mcost + ' cr', 958, 464);
+    this.rects.push({ kind: 'med', x: 46, y: 430, w: 932, h: 52 });
+
+    roundRect(c, 46, 492, 932, 108, 18);
     c.fillStyle = 'rgba(255,79,216,0.16)';
     c.fill();
     c.strokeStyle = 'rgba(255,79,216,0.9)';
@@ -441,12 +469,12 @@ class Panel {
     c.stroke();
     c.textAlign = 'center';
     c.fillStyle = '#ffffff';
-    c.font = '800 42px Inter, system-ui, sans-serif';
-    c.fillText(S.level >= LEVELS ? 'ÚLTIMO NIVEL — VER RESULTADO' : 'SIGUIENTE NIVEL', 512, 536);
+    c.font = '800 40px Inter, system-ui, sans-serif';
+    c.fillText(S.level >= LEVELS ? 'ÚLTIMO NIVEL — VER RESULTADO' : 'SIGUIENTE NIVEL', 512, 552);
     c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '500 20px Inter, system-ui, sans-serif';
-    c.fillText('dispara aquí cuando estés listo', 512, 568);
-    this.rects.push({ kind: 'next', x: 46, y: 466, w: 932, h: 128 });
+    c.font = '500 19px Inter, system-ui, sans-serif';
+    c.fillText('dispara aquí cuando estés listo', 512, 582);
+    this.rects.push({ kind: 'next', x: 46, y: 492, w: 932, h: 108 });
   }
 
   drawWin(c) {
@@ -521,6 +549,27 @@ const SHOP = [
 
 function costOf(u, lvl) { return Math.round(u.base * (1 + lvl * 0.75) / 10) * 10; }
 
+// Kit médico: vida al instante en la tienda, con coste creciente. El blindaje
+// sube la vida máxima pero no cura; sin esto, llegar tocado al sector 4 era
+// una sentencia y no había nada que comprar para arreglarlo.
+const MEDKIT = { heal: 70, base: 110, step: 45 };
+function medCost() { return MEDKIT.base + (S.up.med || 0) * MEDKIT.step; }
+
+function buyMed() {
+  if (S.health >= S.maxHealth) { panel.flashMsg = 'VIDA AL MÁXIMO'; return; }
+  const cost = medCost();
+  if (S.credits < cost) {
+    panel.flashMsg = 'FALTAN ' + (cost - S.credits) + ' CRÉDITOS';
+    if (audio.dry) audio.dry();
+    return;
+  }
+  S.credits -= cost;
+  S.up.med = (S.up.med || 0) + 1;
+  S.health = Math.min(S.maxHealth, S.health + MEDKIT.heal);
+  panel.flashMsg = '';
+  if (audio.parry) audio.parry();
+}
+
 function roundRect(c, x, y, w, h, r) {
   c.beginPath();
   c.moveTo(x + r, y);
@@ -590,13 +639,17 @@ function buildLevel(level) {
 
   const n = 3;
   for (let w = 0; w < n; w++) {
-    const count = Math.round(5 + level * 1.1 + w * 1.2);
+    // la curva se aplana desde el sector 3: más robots, pero sin avalancha
+    const lv = level <= 2 ? level : 2 + (level - 2) * 0.55;
+    const count = Math.round(5 + lv * 1.1 + w * 1.2);
     const list = [];
     for (let i = 0; i < count; i++) list.push(pickKind(level));
     // variedad forzada: siempre algo aéreo y algo de azotea, francotirador desde el 2
     if (!list.some(k => k === 'drone' || k === 'wasp')) list.push('wasp');
     if (!list.some(k => k === 'turret')) list.push('turret');
-    if (level >= 2 && list.length < 6) list.push('sniper');
+    // balcones: uno garantizado por oleada desde el sector 2 y dos desde el 4
+    if (level >= 2) list.push('sniper');
+    if (level >= 4) list.push('sniper');
     waves.push({ list, boss: false });
   }
 }
@@ -898,7 +951,7 @@ function gameOver() {
 function resetRun() {
   S.score = 0; S.credits = 0; S.kills = 0; S.shots = 0; S.hits = 0;
   S.combo = 1; S.comboT = 0;
-  S.up = { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0 };
+  S.up = { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0, med: 0 };
   S.maxHealth = 200; S.health = 200;
   S.level = 1;
   panel.hide();

@@ -12,19 +12,21 @@ const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 function stdMat(color, metal = 0.8, rough = 0.35) {
-  // El metal puro sobre un entorno nocturno se lee como una silueta NEGRA:
-  // sin luz directa no hay especular y el difuso de un metal es casi cero.
-  // Dos blindajes: metalizado limitado + suelo de luminancia (ningún tono
-  // puede quedar por debajo del 45 % de brillo) y emisivo del propio color
-  // para que la silueta siga leyéndose a contraluz o en sombra.
+  // Acero de verdad: metalness alto y rugosidad baja. El blindaje contra las
+  // siluetas negras ya no es el metal (que se recortaba a 0.4 y dejaba todo
+  // como plástico mate), sino el entorno PMREM fuerte + un emisivo mínimo.
   const c = new THREE.Color(color);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  // nada de colores de caramelo: saturación contenida, todo tira a aleación
+  c.setHSL(hsl.h, Math.min(hsl.s, 0.34), hsl.l);
   const lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
-  if (lum < 0.42) c.offsetHSL(0, 0, 0.42 - lum);
+  if (lum < 0.26) c.offsetHSL(0, 0, 0.26 - lum);
   const m = new THREE.MeshStandardMaterial({
-    color: c, metalness: Math.min(metal, 0.4), roughness: Math.max(rough, 0.45),
-    envMapIntensity: 1.0
+    color: c, metalness: Math.min(metal, 0.92), roughness: Math.max(rough, 0.22),
+    envMapIntensity: 1.9
   });
-  m.emissive = c.clone().multiplyScalar(0.34);
+  m.emissive = c.clone().multiplyScalar(0.09);
   m.emissiveIntensity = 1;
   return m;
 }
@@ -586,17 +588,36 @@ export class Hound extends Enemy {
 // ------------------------------------------------------------------ centinela
 export class Sentry extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xffc24a, 1.0, 0.24));
-    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.32));
+    const body = this._mat(stdMat(0xa8b3c0, 1.0, 0.3));
+    const dark = this._mat(stdMat(0x6d7683, 0.95, 0.4));
     const accent = neonMat(this.color);
 
     for (const s of [-1, 1]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.78, 0.15), dark);
-      leg.position.set(s * 0.16, 0.39, 0);
-      this.group.add(leg);
-      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.3), body);
-      boot.position.set(s * 0.16, 0.04, -0.04);
+      // cadera -> muslo -> rodilla -> espinilla -> pie: una pierna articulada,
+      // no un palo con una caja de zapato
+      const hip = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 6), dark);
+      hip.position.set(s * 0.17, 0.86, 0);
+      this.group.add(hip);
+      const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.36, 0.17), body);
+      thigh.position.set(s * 0.17, 0.68, 0.01);
+      thigh.rotation.x = -0.12;
+      this.group.add(thigh);
+      const knee = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), dark);
+      knee.position.set(s * 0.17, 0.5, 0.045);
+      this.group.add(knee);
+      const shin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.34, 0.14), dark);
+      shin.position.set(s * 0.17, 0.32, 0.02);
+      shin.rotation.x = 0.1;
+      this.group.add(shin);
+      const piston = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.3, 6), accent);
+      piston.position.set(s * 0.17, 0.34, 0.11);
+      this.group.add(piston);
+      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.32), body);
+      boot.position.set(s * 0.17, 0.055, -0.05);
       this.group.add(boot);
+      const toe = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.06, 0.1), dark);
+      toe.position.set(s * 0.17, 0.035, -0.2);
+      this.group.add(toe);
     }
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.62, 0.3), body);
@@ -604,20 +625,34 @@ export class Sentry extends Enemy {
     this.group.add(torso);
     this.addHit(hitbox(0.46, 1, this, 'body', 1.05, 1.9));
 
+    // radiador trasero + cuello: remates que rompen la silueta de caja
+    const rad = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.3, 0.06), dark);
+    rad.position.set(0, 1.12, 0.18);
+    this.group.add(rad);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8), dark);
+    neck.position.set(0, 1.4, 0);
+    this.group.add(neck);
+
     const chest = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.06), accent);
     chest.position.set(0, 1.12, -0.17);
     this.group.add(chest);
 
-    // hombreras
+    // hombreras + brazo partido en hombro, codo y antebrazo
     for (const s of [-1, 1]) {
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.34), dark);
-      pad.position.set(s * 0.38, 1.3, 0);
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.36), dark);
+      pad.position.set(s * 0.38, 1.32, 0);
       pad.rotation.z = s * 0.18;
       this.group.add(pad);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.13), body);
-      arm.position.set(s * 0.4, 0.98, -0.06);
-      arm.rotation.x = -0.35;
-      this.group.add(arm);
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.26, 0.12), body);
+      upper.position.set(s * 0.41, 1.13, -0.03);
+      this.group.add(upper);
+      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), dark);
+      elbow.position.set(s * 0.41, 0.99, -0.05);
+      this.group.add(elbow);
+      const fore = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.24, 0.11), dark);
+      fore.position.set(s * 0.41, 0.86, -0.1);
+      fore.rotation.x = -0.32;
+      this.group.add(fore);
     }
 
     // casco con visor
@@ -627,6 +662,9 @@ export class Sentry extends Enemy {
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.03), neonMat(0xff2d55));
     visor.position.set(0, 1.54, -0.135);
     this.group.add(visor);
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.26, 4), dark);
+    antenna.position.set(0.09, 1.72, 0.02);
+    this.group.add(antenna);
     this.addHit(hitbox(0.21, 3, this, 'head', 1.52));
 
     // fusil
@@ -1409,7 +1447,7 @@ export class Sniper extends Enemy {
       strip.position.set(s * 0.1, 1.14, -0.14);
       this.group.add(strip);
     }
-    this.addHit(hitbox(0.34, 1, this, 'body', 1.12, 1.9));
+    this.addHit(hitbox(0.48, 1, this, 'body', 1.12, 1.9));
 
     const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.1, 0.2), dark);
     shoulders.position.y = 1.4;
@@ -1444,7 +1482,7 @@ export class Sniper extends Enemy {
     lens.position.set(0, 0.09, -0.34);
     rifle.add(lens);
     this.group.add(rifle);
-    this.addHit(hitbox(0.25, 2.6, this, 'head', 1.55));
+    this.addHit(hitbox(0.34, 2.6, this, 'head', 1.55));
 
     // Baliza: un punto rojo pulsante sobre la cabeza. De noche el francotirador
     // se perdía contra la fachada y el jugador no sabía de dónde le disparaban.

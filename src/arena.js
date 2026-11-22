@@ -1201,9 +1201,9 @@ export class Arena {
           // fuera del cono de visión, alto o lejos, se queda invisible y la
           // oleada no avanza. Filtramos por distancia, ángulo y altura.
           const dz = pz - (bz + bal.z);
-          if (bal.y < 2.2 || bal.y > 11.5) continue;
-          if (dz < Math.max(9, aheadMin) || dz > 23) continue;
-          if (Math.abs(Math.atan2(bal.x, dz)) > 0.52) continue;
+          if (bal.y < 2.0 || bal.y > 14.5) continue;
+          if (dz < Math.max(7, aheadMin) || dz > 34) continue;
+          if (Math.abs(Math.atan2(bal.x, dz)) > 0.95) continue;
           cands.push({ pos: new THREE.Vector3(bal.x, bal.y, bz + bal.z), kind: 'balcony' });
         }
       }
