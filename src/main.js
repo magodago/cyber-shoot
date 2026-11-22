@@ -638,10 +638,11 @@ function startLevel(level) {
   updateHud(true);
   hideOverlay();
 
-  // Precalienta los shaders del sector MIENTRAS aún se ve el cartel: si no, el
-  // primer frame del nivel se queda medio segundo compilando materiales nuevos
-  // (en Quest se nota como congelación al empezar el nivel 1).
-  if (renderer.compile) renderer.compile(scene, camera);
+  // OJO: aquí había un renderer.compile(scene, camera) "para precalentar". Era
+  // justo la causa del tirón: compile() compila TODOS los programas del sector de
+  // golpe y de forma SÍNCRONA (37 programas, ~370 ms en el PC y varios segundos en
+  // Quest), en el peor momento posible. Los programas que de verdad se usan se
+  // compilan solos al primer dibujado, repartidos entre fotogramas.
 }
 
 function clearEnemies() {
