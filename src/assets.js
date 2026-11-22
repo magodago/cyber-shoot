@@ -51,10 +51,11 @@ function normalizar(scene, h) {
   return pivot;
 }
 
-function cargar(id) {
+function cargar(id, intento = 0) {
+  const nombres = [id + '_1k.gltf', id + '.gltf', 'scene.gltf'];
   return new Promise((resolve) => {
     loader.load(
-      PROP_DIR + id + '/' + id + '.gltf',
+      PROP_DIR + id + '/' + nombres[intento],
       (gltf) => {
         gltf.scene.traverse((o) => {
           if (!o.isMesh) return;
@@ -72,6 +73,7 @@ function cargar(id) {
       },
       undefined,
       (e) => {
+        if (intento < 2) return resolve(cargar(id, intento + 1));
         console.warn('[assets] no se pudo cargar', id, e);
         resolve(null);
       }
