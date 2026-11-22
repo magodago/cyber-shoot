@@ -48,8 +48,12 @@ const HIT_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, dep
 // origen en los pies, así que una esfera centrada en 0 les pasaba por las
 // piernas y los disparos al torso no registraban.
 function hitbox(r, mult, enemy, kind, y = 0, sy = 1) {
+  // Holtura global: los volúmenes de impacto se inflan un 25% para que el tiro
+  // se sienta justo. Con el radio "real" el jugador ve pasar balas por encima
+  // del hombro del enemigo sin que cuente.
+  const PAD = 1.25;
   const m = new THREE.Mesh(HIT_GEO, HIT_MAT);
-  m.scale.set(r, r * sy, r);
+  m.scale.set(r * PAD, r * sy * PAD, r * PAD);
   m.position.y = y;
   m.userData.enemy = enemy;
   m.userData.mult = mult;

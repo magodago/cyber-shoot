@@ -460,10 +460,10 @@ export class WeaponSystem {
     this.sens = 1;
   }
 
-  get magSize() { return 14 + this.upgrades.mag * 4; }
-  get reloadTime() { return Math.max(0.42, 0.85 - this.upgrades.reload * 0.09); }
-  get fireDelay() { return Math.max(0.075, 0.145 - this.upgrades.rate * 0.012); }
-  get damage() { return 34 + this.upgrades.dmg * 9; }
+  get magSize() { return 34 + this.upgrades.mag * 6; }
+  get reloadTime() { return Math.max(0.30, 0.55 - this.upgrades.reload * 0.05); }
+  get fireDelay() { return Math.max(0.06, 0.09 - this.upgrades.rate * 0.005); }
+  get damage() { return 16 + this.upgrades.dmg * 5; }
 
   attachControllers(renderer) {
     this.renderer = renderer;
@@ -530,9 +530,8 @@ export class WeaponSystem {
     const h = this.hands[hand];
     if (!h || h.reloading || h.cool > 0) return false;
     if (h.ammo <= 0) {
-      h.cool = 0.2;
-      if (this.audio && this.audio.dry) this.audio.dry();
-      this.onDry(hand);
+      // Munición automática: al vaciar el cargador se rellena solo (sin botón).
+      this.reload(hand, true);
       return false;
     }
     h.ammo--;
@@ -736,19 +735,17 @@ export class WeaponSystem {
       // estado real de la mano para el HUD: pistola sujeta por el mando
       h.held = held && !useView;
 
-      // apuntar al suelo → recarga
-      const q = new THREE.Quaternion();
-      h.group.getWorldQuaternion(q);
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-      const down = fwd.y < -0.6;
-      h.aimDownT = down ? h.aimDownT + dt : 0;
-      if (down && h.ammo < this.magSize && !h.reloading) this.reload(hand);
+      // Recarga AUTOMÁTICA: al vaciar el cargador se rellena solo. Se quitó el
+      // gesto de apuntar al suelo porque partía el ritmo y en pleno combate no
+      // se ve el cargador vacío.
+      if (h.ammo <= 0 && !h.reloading) this.reload(hand, true);
 
       if (h.reloading) {
         h.reloadT += dt;
         const k = Math.min(1, h.reloadT / this.reloadTime);
-        h.group.rotateX(Math.sin(k * Math.PI) * 0.55);
-        h.group.position.y -= Math.sin(k * Math.PI) * 0.1;
+        // amago mínimo: el arma baja un dedo, no se sale de la línea de tiro
+        h.group.rotateX(Math.sin(k * Math.PI) * 0.12);
+        h.group.position.y -= Math.sin(k * Math.PI) * 0.025;
         if (this.fx && h.reloadT < dt * 1.5) {
           this.fx.ring(h.group.position, h.accent, 0.5, 0.4);
         }

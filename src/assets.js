@@ -228,7 +228,9 @@ function bboxVisible(root) {
 // efectos (fogonazo, chispas, luz) y el retroceso, que siguen en weapon.js.
 export async function skinWeapons(system) {
   if (!system || !system.hands) return;
-  if (new URLSearchParams(location.search).get('guns') === 'gold') return;
+  // La pistola dorada procedural es la de serie: el escaneo CC0 se veía como un
+  // arma oxidada pegada a la mano. El escaneo queda como opción (?guns=scan).
+  if (new URLSearchParams(location.search).get('guns') !== 'scan') return;
   if (!loader) loader = new GLTFLoader();
 
   const src = await cargar('service_pistol');

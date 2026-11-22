@@ -36,6 +36,9 @@ const S = {
   waveIndex: 0,
   waveState: 'idle',
   waveT: 0,
+  // Reloj propio del estado 'clear'. No depende de waveT, que puede venir
+  // arrastrado del estado anterior: con esto la oleada no se puede colgar.
+  clearT: 0,
   queue: [],
   spawnT: 0,
   boss: null,
@@ -208,9 +211,9 @@ function hitTest(origin, dir, hand) {
 
   const hits = ray.intersectObjects(objs, false);
   if (!hits.length) {
-    // En VR apuntar con la mano a un dron es muy difícil: si el rayo pasa
-    // cerca del enemigo, cuenta como impacto (manga ancha solo en el visor)
-    return renderer.xr.isPresenting ? assistShot(origin, dir) : null;
+    // Manga ancha: si el rayo pasa cerca del enemigo, cuenta como impacto.
+    // Antes sólo se aplicaba en VR y en pantalla el tiro se perdía por un píxel.
+    return assistShot(origin, dir);
   }
 
   const pierce = 1 + (weapon.upgrades.pierce || 0);
@@ -245,12 +248,12 @@ function hitTest(origin, dir, hand) {
 }
 
 function assistShot(origin, dir) {
-  // Asistencia de puntería ESTRICTA. Antes el radio crecía con la distancia
-  // (base*1.1 + 0.42 + t*0.011 ≈ 1.4 m a 30 m) y mataba enemigos a los que no
-  // apuntabas. Ahora sólo engancha si el rayo pasa por el cono de la mira:
-  // ~1.3° de error angular y como mucho 30 cm de desvío, con 5 cm de holgura.
-  const ANG = 0.023;      // rad ≈ 1.3°
-  const MAXOFF = 0.30;    // m de desvío máximo a cualquier distancia
+  // Asistencia de puntería: engancha si el rayo pasa cerca del blanco.
+  // Se ajustó a la baja en la build 21 y se pasó de estricta (1.3° / 30 cm):
+  // con el arma en la mano cuesta horrores dar a nada en movimiento. Ahora
+  // ~2.6° de error angular y 55 cm de desvío máximo, con 10 cm de holgura.
+  const ANG = 0.045;      // rad ≈ 2.6°
+  const MAXOFF = 0.55;    // m de desvío máximo a cualquier distancia
   const v = new THREE.Vector3();
   let best = null;
   let bestT = Infinity;
@@ -710,6 +713,7 @@ function startLevel(level) {
   S.waveIndex = 0;
   S.waveState = 'idle';
   S.waveT = 1.6;
+  S.clearT = 0;
   S.queue = [];
   S.boss = null;
   S.bossDist = 0;
@@ -892,28 +896,37 @@ function updateWaves(dt) {
       }
       S.spawnT = rand(0.30, 0.55);
     }
-    if (!S.queue.length) S.waveState = 'clear';
+    if (!S.queue.length) { S.waveState = 'clear'; S.clearT = 0; }
     return;
   }
 
   if (S.waveState === 'clear') {
     S.waveT -= dt;
+    S.clearT += dt;
     // Si queda un enemigo fuera de la vista (balcón alto, detrás de una
     // fachada, fuera del cono), el jugador no puede rematarlo y la oleada se
-    // queda colgada. Primero lo devolvemos a la calle, a la vista. Solo si
-    // sigue sin poder matarse se retira de la escena.
-    if (S.waveT < -2.5 && aliveCount() > 0) rescueStuckEnemies();
-    if (S.waveT < -14 && aliveCount() > 0) {
+    // queda colgada. Primero lo devolvemos a la calle, a la vista; después se
+    // retira de la escena sin ruido.
+    if (S.clearT > 2 && aliveCount() > 0) rescueStuckEnemies();
+    if (S.clearT > 6 && aliveCount() > 0) {
       for (const e of enemies) {
         // el titán no se retira nunca: si vive, la oleada no está limpia
         if (e && !e.dead && !e.isBoss) e.silentKill();
       }
-      if (aliveCount() === 0) S.waveT = -30;
     }
-    if (S.waveT <= 0 && aliveCount() === 0) {
+    // Avance garantizado: la oleada cierra cuando no queda nadie a quien
+    // matar, o a los 9 s pase lo que pase (salvo que el titán siga vivo).
+    // El reloj es clearT, no waveT: waveT puede venir arrastrado y dejar la
+    // oleada esperando para siempre, que era el fallo del nivel 1.
+    const bossAlive = !!(S.boss && !S.boss.dead);
+    if (!bossAlive && (aliveCount() === 0 || S.clearT > 9)) {
+      if (aliveCount() > 0) {
+        for (const e of enemies) if (e && !e.dead && !e.isBoss) e.silentKill();
+      }
       S.waveIndex++;
       S.waveState = 'idle';
-      S.waveT = 1.5;
+      S.waveT = 1.2;
+      S.clearT = 0;
       music.setIntensity(S.level % 3 === 0 ? 1.6 : 1);
       updateHud(true);
     }
@@ -1148,6 +1161,12 @@ function frameBody(time, xrFrame) {
 
   arena.update(dt, t);
   fx.update(dt);
+  // Disparo en ráfaga: mientras se mantiene pulsado se dispara solo; la
+  // cadencia real la marca weapon.fireDelay (ametralladora ligera).
+  if (S.mode === 'playing') {
+    if (held.L) weapon.fire('L');
+    if (held.R) weapon.fire('R');
+  }
   weapon.update(dt, xrFrame);
   music.update();
 
@@ -1438,6 +1457,8 @@ function hideOverlay() {
 /* ------------------------------------------------------------------ entrada */
 let yaw = 0, pitch = 0;
 const input = { left: false, right: false, up: false, down: false };
+// Gatillo pulsado (VR o ratón): alimenta el disparo continuo del bucle.
+const held = { L: false, R: false };
 
 function initDesktop() {
   const el = renderer.domElement;
@@ -1453,6 +1474,15 @@ function initDesktop() {
     pitch = clamp(pitch - e.movementY * 0.0022, -1.0, 0.75);
     rig.rotation.y = yaw;
     camera.rotation.x = pitch;
+  });
+  // mantener el botón izquierdo = ráfaga continua
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (document.pointerLockElement !== renderer.domElement) return;
+    held.R = true;
+  });
+  document.addEventListener('mouseup', (e) => {
+    if (e.button === 0) held.R = false;
   });
   document.addEventListener('keydown', (e) => {
     // carteles: cualquier tecla de acción los pasa sin esperar
@@ -1511,7 +1541,11 @@ function initXR() {
         startCampaign(); return;
       }
       const hand = c.userData.hand === 'L' ? 'L' : (c.userData.handedness === 'left' ? 'L' : 'R');
+      held[hand] = true;
       weapon.fire(hand);
+    });
+    c.addEventListener('selectend', () => {
+      held[c.userData.hand === 'L' ? 'L' : (c.userData.handedness === 'left' ? 'L' : 'R')] = false;
     });
     c.addEventListener('squeezestart', () => {
       if (S.mode === 'story') story.skip();
