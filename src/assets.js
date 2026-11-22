@@ -33,7 +33,7 @@ const DEFS = {
 // Los escaneos de Poly Haven son kits: traen variantes y piezas sueltas.
 // Se quedan solo las del arma montada (variante _a, cargador lleno).
 const LIMPIAR = {
-  service_pistol: /_b$|magazine_empty|_bullet/,
+  service_pistol: /_b$|magazine_|_bullet/,
   bolt_action_rifle_7_62: /_b$|_bullet_54mm/,
 };
 
@@ -194,11 +194,14 @@ export async function initAssets({ renderer, scene, arena }) {
 
 /* ------------------------------------------------------------------ armas */
 
-// Ajuste fino del arma escaneada en la mano. Las cotas de referencia salen del
-// viewmodel procedural de src/weapon.js: boca del cañón en z = -0.108 y plano
-// superior de la corredera en y = 0.021. Todo retoque se hace aquí.
+// Ajuste fino del arma escaneada en la mano. El escaneo mide 22 cm de largo y
+// 13 de alto; la empuñadura se ancla al puño (origen de `body`) y la boca del
+// cañón arrastra consigo el fogonazo y el láser. Todo retoque se hace aquí.
 const ARMA_AJUSTE = {
-  escala: 0.92,   // 1 = tamaño real del escaneo (la pistola mide 24 cm)
+  escala: 0.95,   // 1 = tamaño real del escaneo
+  empZ: 0.87,     // empuñadura: fracción de la eslora desde la boca (0 boca, 1 culata)
+  empY: 0.34,     // empuñadura: fracción de la altura desde abajo
+  ejeY: 0.86,     // eje del cañón: fracción de la altura desde abajo
   atras: 0.0,     // + aleja el arma de la cámara (hacia la mano)
   arriba: 0.0,    // + sube el arma
   lado: 0.0,      // + la desplaza a la derecha
@@ -245,17 +248,34 @@ export async function skinWeapons(system) {
 
     const A = ARMA_AJUSTE;
     const s = A.escala;
+    // empuñadura al puño
     skin.scale.setScalar(s);
     skin.position.set(
       -(box.min.x + box.max.x) * 0.5 * s + A.lado,
-      0.021 - box.max.y * s + A.arriba,
-      -0.108 - box.min.z * s + A.atras
+      -(box.min.y + size.y * A.empY) * s + A.arriba,
+      -(box.min.z + size.z * A.empZ) * s + A.atras
     );
 
     for (const p of h.gunParts) p.visible = false;
     if (h.ammoRing) h.ammoRing.visible = false;
     h.body.add(skin);
     h.skin = skin;
+
+    // La boca del cañón real no cae donde la del arma procedural: se mueve el
+    // muzzle y con él todos los efectos, que son hijos de `body` y nacieron
+    // copiando su posición.
+    const boca = new THREE.Vector3(
+      0,
+      (box.min.y + size.y * A.ejeY) * s + skin.position.y,
+      box.min.z * s + skin.position.z
+    );
+    const d = boca.sub(h.muzzle.position);
+    if (d.lengthSq() > 1e-8) {
+      h.muzzle.position.add(d);
+      for (const e of [h.flash, h.flashMid, h.flashCore, h.petals, h.sparks, h.tongueGroup, h.flashLight]) {
+        if (e) e.position.add(d);
+      }
+    }
   }
   console.info('[assets] pistola escaneada montada');
 }
