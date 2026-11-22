@@ -150,10 +150,10 @@ function damagePlayer(dmg) {
   // en dos décimas de segundo y el jugador percibe el juego como injusto.
   const now = performance.now();
   if (now < (S.invulnUntil || 0)) return;
-  S.invulnUntil = now + 900;
-  // 0.62: el juego pedía ser exigente, no castigar. La vida base sube a 200
-  // y cada impacto pega un 38 % menos.
-  S.health -= dmg * 0.62;
+  S.invulnUntil = now + 700;
+  // Antes el 0.62 dejaba cada impacto en 2-9 PV sobre 200 de vida: el jugador
+  // aguantaba minutos sin sentir peligro. Ahora el golpe duele de verdad.
+  S.health -= dmg * 2.4;
   S.combo = 1;
   if (audio.playerHit) audio.playerHit();
   shake(0.28);
@@ -191,21 +191,32 @@ function hitTest(origin, dir, hand) {
   }
 
   const pierce = 1 + (weapon.upgrades.pierce || 0);
-  const seen = new Set();
   const dmgBase = weapon.damage;
   let out = null;
 
+  // Una misma silueta tiene varias cajas (cuerpo, cabeza) y la de la cabeza
+  // queda dentro del volumen del torso: quedarse con el primer impacto hacía
+  // que disparar a la cabeza nunca contara. Se elige la mejor caja de cada
+  // enemigo (la de mayor multiplicador) y se ordena por distancia.
+  const best = new Map();
   for (const h of hits) {
     const e = h.object.userData.enemy;
-    if (!e || e.dead || seen.has(e)) continue;
-    seen.add(e);
+    if (!e || e.dead) continue;
+    const cur = best.get(e);
+    const mult = h.object.userData.mult || 1;
+    if (!cur || mult > cur.mult || (mult === cur.mult && h.distance < cur.hit.distance)) {
+      best.set(e, { hit: h, mult });
+    }
+  }
+  const list = [...best.entries()].sort((a, b) => a[1].hit.distance - b[1].hit.distance).slice(0, pierce);
+
+  for (const [e, { hit: h, mult: partMult }] of list) {
     const dist = h.distance;
     const falloff = dist < 14 ? 1.4 : dist < 26 ? 1.15 : 1;
     const crit = Math.random() < 0.08 + (weapon.upgrades.crit || 0) * 0.09;
     const dmg = dmgBase * falloff * (crit ? 2.1 : 1);
-    e.hit(h.point, 1, dmg);
+    e.hit(h.point, partMult, dmg);
     out = { point: h.point, enemy: e, crit, dmg };
-    if (seen.size >= pierce) break;
   }
   return out;
 }
@@ -992,8 +1003,8 @@ function frameBody(time, xrFrame) {
     // regeneración: lenta entre oleadas y, sobre todo, si llevas 3 s sin
     // recibir un disparo. Sin esto, un nivel se vuelve imposible de remontar.
     if (S.health < S.maxHealth) {
-      const calm = performance.now() - (S.invulnUntil || 0) > 3000;
-      if (calm) S.health = Math.min(S.maxHealth, S.health + dt * (S.waveState === 'clear' ? 9 : 4.5));
+      const calm = performance.now() - (S.invulnUntil || 0) > 4500;
+      if (calm) S.health = Math.min(S.maxHealth, S.health + dt * (S.waveState === 'clear' ? 6 : 2.2));
     }
   } else if (S.mode === 'shop') {
     // en la tienda los enemigos no existen y el arma está al máximo
@@ -1402,7 +1413,7 @@ function boot() {
   // Sonda de pruebas: con ?debug expone el estado del juego para poder
   // comprobarlo desde fuera (nivel, enemigos, jefe, modo, armas).
   if (new URLSearchParams(location.search).has('debug')) {
-    window.__cs = { S, enemies, startLevel, spawnOne, weapon, story, camera };
+    window.__cs = { S, enemies, startLevel, spawnOne, weapon, story, camera, hitTest, renderer };
   }
 
   window.addEventListener('resize', () => {
@@ -1410,6 +1421,40 @@ function boot() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // Vigilante del visor: en el navegador del visor/móvil el contexto WebGL a
+  // veces se queda sin memoria y el fotograma deja de llegar. Sin esto la
+  // imagen se quedaba clavada y solo se salía recargando (fallo del nivel 4).
+  let lastBeat = -1, stuck = 0;
+  setInterval(() => {
+    if (S.frames === lastBeat) {
+      if (document.hidden) { lastBeat = S.frames; stuck = 0; return; }
+      stuck++;
+      if (stuck === 2) {                       // 2 s sin dibujar: limpia la basura
+        for (const e of enemies) if (e && !e.isBoss && !e.removed) e.remove();
+        enemies.length = 0;
+        if (S.mode === 'playing') S.waveT = 0;
+      } else if (stuck >= 6) {                 // 6 s: reinicia el bucle
+        S.mode = 'playing';
+        weapon.enabled = true;
+        clock.getDelta();
+        renderer.setAnimationLoop(frame);
+        stuck = 0;
+      }
+    } else {
+      lastBeat = S.frames; stuck = 0;
+    }
+  }, 1000);
+
+  const cv = renderer.domElement;
+  cv.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    console.warn('[cyber-shoot] contexto WebGL perdido, recuperando…');
+  });
+  cv.addEventListener('webglcontextrestored', () => {
+    clock.getDelta();
+    renderer.setAnimationLoop(frame);
   });
 }
 

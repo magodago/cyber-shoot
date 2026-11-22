@@ -21,14 +21,20 @@ function neonMat(color) {
   return new THREE.MeshBasicMaterial({ color, toneMapped: false });
 }
 
-function hitbox(r, mult, enemy, kind) {
-  const m = new THREE.Mesh(
-    new THREE.SphereGeometry(r, 8, 6),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
-  );
+const HIT_GEO = new THREE.SphereGeometry(1, 8, 6);
+const HIT_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+
+// `y` y `sy` permiten llevar la caja al cuerpo real: los humanoides tienen el
+// origen en los pies, así que una esfera centrada en 0 les pasaba por las
+// piernas y los disparos al torso no registraban.
+function hitbox(r, mult, enemy, kind, y = 0, sy = 1) {
+  const m = new THREE.Mesh(HIT_GEO, HIT_MAT);
+  m.scale.set(r, r * sy, r);
+  m.position.y = y;
   m.userData.enemy = enemy;
   m.userData.mult = mult;
   m.userData.part = kind;
+  m.userData.sharedGeo = true;
   return m;
 }
 
@@ -315,10 +321,13 @@ export class Enemy {
     this.removed = true;
     this.world.scene.remove(this.group);
     this.group.traverse(o => {
-      if (o.isMesh || o.isSprite) {
-        if (o.geometry) o.geometry.dispose();
-      }
+      // NUNCA tocar sprites: Three comparte UNA geometría para todos los
+      // Sprite del mundo. Al liberarla, HUD, fogonazos y balizas dejan de
+      // dibujarse y la imagen se queda clavada (fallo del nivel 4).
+      if (o.isSprite) return;
+      if (o.isMesh && o.geometry && !o.userData.sharedGeo) o.geometry.dispose();
     });
+    this.group.traverse(o => { o.userData.enemy = null; });
   }
 }
 
@@ -573,7 +582,7 @@ export class Sentry extends Enemy {
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.62, 0.3), body);
     torso.position.set(0, 1.06, 0);
     this.group.add(torso);
-    this.addHit(hitbox(0.4, 1, this, 'body'));
+    this.addHit(hitbox(0.46, 1, this, 'body', 1.05, 1.9));
 
     const chest = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.06), accent);
     chest.position.set(0, 1.12, -0.17);
@@ -598,7 +607,7 @@ export class Sentry extends Enemy {
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.03), neonMat(0xff2d55));
     visor.position.set(0, 1.54, -0.135);
     this.group.add(visor);
-    this.addHit(hitbox(0.17, 3, this, 'head'));
+    this.addHit(hitbox(0.21, 3, this, 'head', 1.52));
 
     // fusil
     const gun = new THREE.Group();
@@ -670,7 +679,7 @@ export class Boss extends Enemy {
     const torso = new THREE.Mesh(new THREE.BoxGeometry(2.35, 1.75, 1.3), shell);
     torso.position.set(0, 2.55, 0);
     this.group.add(torso);
-    this.addHit(hitbox(1.2, 1, this, 'body'));
+    this.addHit(hitbox(1.25, 1, this, 'body', 1.95, 1.55));
 
     const chest = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.05, 0.2), dark);
     chest.position.set(0, 2.62, -0.66);
@@ -734,7 +743,7 @@ export class Boss extends Enemy {
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.12, 0.06), neonMat(0xff2d55));
     visor.position.set(0, 3.79, -0.42);
     this.group.add(visor);
-    this.addHit(hitbox(0.35, 3.75, this, 'head'));
+    this.addHit(hitbox(0.62, 3.75, this, 'head', 3.75));
 
     for (const s of [-1, 1]) {
       const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.62, 6), dark);
@@ -1103,7 +1112,7 @@ export class Turret extends Enemy {
     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.52, 0.22, 8), dark);
     base.position.y = 0.11;
     this.group.add(base);
-    this.addHit(hitbox(0.5, 1, this, 'body'));
+    this.addHit(hitbox(0.5, 1, this, 'body', 0.35, 1.5));
 
     for (let i = 0; i < 3; i++) {
       const a = i / 3 * Math.PI * 2;
@@ -1134,7 +1143,7 @@ export class Turret extends Enemy {
       this.head.add(ringBarrel);
     }
     this.group.add(this.head);
-    this.addHit(hitbox(0.34, 2, this, 'head'));
+    this.addHit(hitbox(0.38, 2, this, 'head', 0.82));
 
     const ammo = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.3), dark);
     ammo.position.set(0.34, 0.42, 0.12);
@@ -1191,7 +1200,7 @@ export class Sniper extends Enemy {
       strip.position.set(s * 0.1, 1.14, -0.14);
       this.group.add(strip);
     }
-    this.addHit(hitbox(0.3, 1, this, 'body'));
+    this.addHit(hitbox(0.34, 1, this, 'body', 1.12, 1.9));
 
     const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.1, 0.2), dark);
     shoulders.position.y = 1.4;
@@ -1226,7 +1235,7 @@ export class Sniper extends Enemy {
     lens.position.set(0, 0.09, -0.34);
     rifle.add(lens);
     this.group.add(rifle);
-    this.addHit(hitbox(0.22, 2.6, this, 'head'));
+    this.addHit(hitbox(0.25, 2.6, this, 'head', 1.55));
 
     // Baliza: un punto rojo pulsante sobre la cabeza. De noche el francotirador
     // se perdía contra la fachada y el jugador no sabía de dónde le disparaban.
