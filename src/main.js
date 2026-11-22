@@ -3,14 +3,14 @@
 // aéreas y terrestres; jefes cada 3 niveles; tienda entre niveles que se dispara.
 
 import * as THREE from 'three';
-import { Arena, PALETTES } from './arena.js';
-import { FX } from './fx.js';
-import { GameAudio } from './audio.js';
-import { WeaponSystem } from './weapon.js';
-import { makeEnemy, BoltField } from './enemies.js';
-import { Music } from './music.js';
-import { createCover } from './cover.js';
-import { createStory } from './story.js';
+import { Arena, PALETTES } from './arena.js?v=13';
+import { FX } from './fx.js?v=13';
+import { GameAudio } from './audio.js?v=13';
+import { WeaponSystem } from './weapon.js?v=13';
+import { makeEnemy, BoltField } from './enemies.js?v=13';
+import { Music } from './music.js?v=13';
+import { createCover } from './cover.js?v=13';
+import { createStory } from './story.js?v=13';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -1005,7 +1005,14 @@ function frameBody(time, xrFrame) {
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
       if (!e) continue;
-      e.update(dt, t);
+      try {
+        e.update(dt, t);
+      } catch (err) {
+        // un enemigo con un fallo no puede tirar el fotograma entero: sin
+        // render, la imagen se queda clavada y parece que el juego se colgó.
+        if (!e.__err) { e.__err = true; console.error('[cyber-shoot] enemigo retirado por error:', err); }
+        e.removed = true;
+      }
       if (e.removed) enemies.splice(i, 1);
     }
     bolts.update(dt, PLAYER, (b) => damagePlayer(b.dmg || 12));

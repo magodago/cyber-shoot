@@ -267,6 +267,14 @@ export class Enemy {
     this._ai(dt, t);
   }
 
+  // Altura del cuerpo sobre el nodo del suelo. El titán la sobreescribe para
+  // elevarse; el resto devuelve 0. Tiene que vivir aquí: si solo existe en una
+  // subclase, cualquier otro enemigo lanza TypeError en la fase de aparición y
+  // el error corta el fotograma antes del render (pantalla congelada).
+  _liftY() {
+    return (this.liftLocal || 0) * (this.group.scale.y || 1);
+  }
+
   _idle() {}
 
   // los que van por el suelo no se atraviesan: se empujan y rodean
