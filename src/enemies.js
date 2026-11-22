@@ -12,9 +12,21 @@ const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 function stdMat(color, metal = 0.8, rough = 0.35) {
-  return new THREE.MeshStandardMaterial({
-    color, metalness: metal, roughness: rough, envMapIntensity: 1.3
+  // El metal puro sobre un entorno nocturno se lee como una silueta NEGRA:
+  // sin luz directa no hay especular y el difuso de un metal es casi cero.
+  // Dos blindajes: metalizado limitado + suelo de luminancia (ningún tono
+  // puede quedar por debajo del 45 % de brillo) y emisivo del propio color
+  // para que la silueta siga leyéndose a contraluz o en sombra.
+  const c = new THREE.Color(color);
+  const lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+  if (lum < 0.42) c.offsetHSL(0, 0, 0.42 - lum);
+  const m = new THREE.MeshStandardMaterial({
+    color: c, metalness: Math.min(metal, 0.4), roughness: Math.max(rough, 0.45),
+    envMapIntensity: 1.0
   });
+  m.emissive = c.clone().multiplyScalar(0.34);
+  m.emissiveIntensity = 1;
+  return m;
 }
 
 function neonMat(color) {
@@ -121,7 +133,13 @@ export class Enemy {
 
   _build() {}
 
-  _mat(m) { this.mats.push(m); return m; }
+  _mat(m) {
+    if (m.userData.baseEI === undefined) {
+      m.userData.baseEI = m.emissiveIntensity === undefined ? 0 : m.emissiveIntensity;
+    }
+    this.mats.push(m);
+    return m;
+  }
 
   addHit(mesh) {
     mesh.userData.enemy = this;
@@ -223,10 +241,10 @@ export class Enemy {
     if (this.state === 'spawn') {
       const k = Math.min(1, this.st / (this.def.riseTime || 0.5));
       const e = 1 - Math.pow(1 - k, 3);
-      this.group.position.y = this.node.pos.y - (this.def.rise || 1.6) * this.scaleBase * (1 - e);
+      this.group.position.y = this.node.pos.y + this._liftY() - (this.def.rise || 1.6) * this.scaleBase * (1 - e);
       this.group.scale.setScalar((0.75 + 0.25 * e) * this.scaleBase);
       if (k >= 1) {
-        this.group.position.y = this.node.pos.y;
+        this.group.position.y = this.node.pos.y + this._liftY();
         this.group.scale.setScalar(this.scaleBase);
         this._idle(dt, t);
         this.state = 'aim';
@@ -424,14 +442,8 @@ export class Hound extends Enemy {
   _build() {
     // el perro tiene que leerse sobre el asfalto: chasis claro con brillo
     // metálico bajo (metalness alto sin envMap = negro) y emisivo propio
-    const body = this._mat(new THREE.MeshStandardMaterial({
-      color: 0xc3cddb, metalness: 0.28, roughness: 0.42,
-      emissive: 0x2a3a4e, emissiveIntensity: 1.0, envMapIntensity: 1.3
-    }));
-    const dark = this._mat(new THREE.MeshStandardMaterial({
-      color: 0x6d7a8c, metalness: 0.32, roughness: 0.5,
-      emissive: 0x151d28, emissiveIntensity: 0.9, envMapIntensity: 1.3
-    }));
+    const body = this._mat(stdMat(0xc3cddb, 0.28, 0.42));
+    const dark = this._mat(stdMat(0x8d9aac, 0.32, 0.5));
     const accent = neonMat(this.color);
 
     // chasis bajo y alargado
@@ -643,140 +655,217 @@ export class Boss extends Enemy {
   }
 
   _build() {
-    const shell = this._mat(stdMat(0xdfe7f0, 1.0, 0.22));
-    const plate = this._mat(stdMat(0xe0a233, 1.0, 0.3));
-    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.34));
-    const accent = neonMat(0xff2d55);
-    const trim = neonMat(0xff9f43);
-    const cool = neonMat(0x49e6ff);
+    // Paleta militar: acero gastado, latón sucio y brasas de reactor.
+    // El blanco nuclear y el dorado brillante eran la razón de que pareciese
+    // un juguete; ahora la silueta es la de una máquina de asedio.
+    const hull = this._mat(stdMat(0x7b8899, 0.85, 0.44));
+    const plate = this._mat(stdMat(0xb07a2c, 0.8, 0.4));
+    const dark = this._mat(stdMat(0x59636f, 0.9, 0.5));
+    const steel = this._mat(stdMat(0xaeb9c7, 0.8, 0.42));
+    const accent = this._mat(new THREE.MeshBasicMaterial({ color: 0xff2d55, toneMapped: false }));
+    const trim = this._mat(new THREE.MeshBasicMaterial({ color: 0xffa63d, toneMapped: false }));
+    const cool = this._mat(new THREE.MeshBasicMaterial({ color: 0x49e6ff, toneMapped: false }));
 
-    // piernas hidráulicas: planta ancha de titán
+    const mk = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = null) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      (parent || this.group).add(m);
+      return m;
+    };
+
+    // ---------------------------------------------------------- piernas
     for (const s of [-1, 1]) {
-      const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.6, 0.7), shell);
-      thigh.position.set(s * 0.95, 0.95, 0);
-      this.group.add(thigh);
-      const shin = new THREE.Mesh(new THREE.BoxGeometry(0.46, 1.2, 0.5), plate);
-      shin.position.set(s * 1.0, 0.05, 0.06);
-      this.group.add(shin);
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.34, 1.25), dark);
-      foot.position.set(s * 1.0, -0.36, 0.14);
-      this.group.add(foot);
-      const knee = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.055, 6, 16), trim);
-      knee.position.set(s * 1.3, 0.62, 0);
-      knee.rotation.y = Math.PI / 2;
-      this.group.add(knee);
-      for (let i = 0; i < 3; i++) {
-        const toe = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.34), trim);
-        toe.position.set(s * 1.0 + (i - 1) * 0.27, -0.5, -0.56);
-        this.group.add(toe);
+      const leg = new THREE.Group();
+      leg.position.set(s * 1.02, 0, 0);
+      this.group.add(leg);
+
+      mk(new THREE.BoxGeometry(0.78, 1.05, 0.86), dark, 0, 1.55, 0.05, 0, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.92, 0.34, 1.0), hull, 0, 2.02, 0.02, 0.12, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.68, 0.52, 0.76), hull, 0, 1.86, 0.16, -0.2, 0, 0, leg);
+      mk(new THREE.CylinderGeometry(0.13, 0.13, 1.0, 8), steel, s * 0.42, 1.5, 0.42, 0.18, 0, 0, leg);
+      mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, 0.92, 0.02);
+      mk(new THREE.ConeGeometry(0.16, 0.52, 5), steel, 0, 0.92, -0.36, -Math.PI / 2.2, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.56, 1.0, 0.62), hull, 0, 0.45, 0.04, 0, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.7, 0.3, 0.7), plate, 0, 0.2, -0.02, 0, 0, 0, leg);
+      mk(new THREE.BoxGeometry(1.02, 0.3, 1.42), dark, 0, -0.28, -0.12, 0, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.86, 0.16, 0.4), steel, 0, -0.4, -0.74, 0.12, 0, 0, leg);
+      for (let i = -1; i <= 1; i++) {
+        mk(new THREE.ConeGeometry(0.1, 0.44, 5), steel, i * 0.3, -0.44, -0.98, -Math.PI / 2, 0, 0, leg);
       }
+      mk(new THREE.TorusGeometry(0.2, 0.05, 6, 14), trim, 0, 0.9, 0.3, 0, 0, 0, leg);
+      mk(new THREE.BoxGeometry(0.07, 0.9, 0.07), accent, s * 0.37, 1.5, -0.36, 0, 0, 0, leg);
     }
 
-    // cadera + torso
-    const hips = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.5, 0.95), plate);
-    hips.position.set(0, 1.72, 0);
-    this.group.add(hips);
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(2.35, 1.75, 1.3), shell);
-    torso.position.set(0, 2.55, 0);
-    this.group.add(torso);
-    this.addHit(hitbox(1.25, 1, this, 'body', 1.95, 1.55));
-
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.05, 0.2), dark);
-    chest.position.set(0, 2.62, -0.66);
-    this.group.add(chest);
+    // ---------------------------------------------------------- cadera
+    mk(new THREE.BoxGeometry(2.0, 0.62, 1.18), dark, 0, 2.4, 0);
     for (const s of [-1, 1]) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.15, 0.12), cool);
-      strip.position.set(s * 0.86, 2.62, -0.74);
-      this.group.add(strip);
+      mk(new THREE.BoxGeometry(1.0, 0.78, 0.18), plate, s * 0.62, 2.02, -0.62, 0.3, 0, s * 0.06);
+      mk(new THREE.BoxGeometry(0.86, 0.56, 0.16), hull, s * 1.04, 2.12, 0.56, -0.2, s * 0.42, 0);
+    }
+    mk(new THREE.BoxGeometry(0.42, 0.86, 0.16), trim, 0, 2.0, -0.66, 0.3, 0, 0);
+
+    // ---------------------------------------------------------- torso
+    this.bust = new THREE.Group();
+    this.bust.position.set(0, 2.72, 0);
+    this.group.add(this.bust);
+    const bust = this.bust;
+
+    mk(new THREE.BoxGeometry(2.5, 1.5, 1.4), hull, 0, 0.3, 0, 0.06, 0, 0, bust);
+    mk(new THREE.BoxGeometry(2.16, 0.6, 1.18), dark, 0, 1.0, 0.18, -0.16, 0, 0, bust);
+    mk(new THREE.BoxGeometry(1.36, 1.0, 0.3), plate, 0, 0.34, -0.72, 0.02, 0, 0, bust);
+    for (const s of [-1, 1]) {
+      mk(new THREE.BoxGeometry(0.56, 0.96, 0.26), dark, s * 0.96, 0.4, -0.6, 0, s * 0.28, 0, bust);
+      for (let r = 0; r < 2; r++) {
+        mk(new THREE.TorusGeometry(0.58 - r * 0.1, 0.05, 6, 16, Math.PI * 1.05), steel,
+          s * 0.4, 0.52 - r * 0.36, -0.68, Math.PI / 2, 0, s * 0.55, bust);
+      }
+      mk(new THREE.BoxGeometry(0.1, 1.2, 0.1), cool, s * 1.17, 0.34, -0.5, 0, 0, 0, bust);
+      // omóplatos dentados
+      mk(new THREE.ConeGeometry(0.16, 0.5, 5), plate, s * 0.8, 1.1, 0.55, Math.PI / 2.6, 0, s * 0.3, bust);
+    }
+    for (let i = 0; i < 5; i++) {
+      mk(new THREE.ConeGeometry(0.16, 0.64 - i * 0.07, 5), i < 2 ? plate : steel,
+        0, 0.66 + i * 0.32, 0.84 - i * 0.06, Math.PI / 2.5, 0, 0, bust);
     }
 
-    // núcleo: punto débil, con halo y luz propia
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.42, 22, 16), neonMat(0xff2d55));
-    this.core.position.set(0, 2.62, -0.78);
-    this.group.add(this.core);
-
+    // núcleo con jaula
+    const cy = 0.42;
+    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.5, 24, 18), new THREE.MeshBasicMaterial({
+      color: 0xff2d55, toneMapped: false
+    }));
+    this.core.position.set(0, cy, -0.8);
+    bust.add(this.core);
+    this._mat(this.core.material);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      mk(new THREE.BoxGeometry(0.09, 1.16, 0.09), steel, Math.cos(a) * 0.72, cy, -0.84 + Math.sin(a) * 0.28, 0, 0, 0, bust);
+    }
     this.halo = new THREE.Sprite(new THREE.SpriteMaterial({
       map: TEX.glow, color: 0xff2d55, transparent: true, opacity: 0.85,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    this.halo.position.set(0, 2.62, -0.84);
-    this.halo.scale.setScalar(3.2);
-    this.group.add(this.halo);
+    this.halo.position.set(0, cy, -1.0);
+    this.halo.scale.setScalar(3.4);
+    bust.add(this.halo);
+    this.coreLight = new THREE.PointLight(0xff2d55, 110, 26, 2);
+    this.coreLight.position.set(0, cy, -1.6);
+    bust.add(this.coreLight);
 
-    this.coreLight = new THREE.PointLight(0xff2d55, 26, 18, 2);
-    this.coreLight.position.set(0, 2.62, -1.15);
-    this.group.add(this.coreLight);
+    // ---------------------------------------------------------- cabeza
+    const head = new THREE.Group();
+    head.position.set(0, 1.44, -0.1);
+    bust.add(head);
+    mk(new THREE.BoxGeometry(0.88, 0.64, 0.88), hull, 0, 0, 0, 0, 0, 0, head);
+    mk(new THREE.BoxGeometry(0.68, 0.44, 0.52), dark, 0, -0.08, -0.54, 0.12, 0, 0, head);
+    mk(new THREE.BoxGeometry(0.62, 0.2, 0.18), steel, 0, 0.17, -0.52, 0, 0, 0, head);
+    mk(new THREE.BoxGeometry(0.62, 0.22, 0.48), plate, 0, -0.3, -0.44, 0.1, 0, 0, head);
+    for (let i = -3; i <= 3; i++) {
+      mk(new THREE.ConeGeometry(0.045, 0.2, 4), steel, i * 0.085, -0.16, -0.64, Math.PI, 0, 0, head);
+      mk(new THREE.ConeGeometry(0.04, 0.16, 4), steel, i * 0.085, -0.36, -0.62, 0, 0, 0, head);
+    }
+    for (const s of [-1, 1]) {
+      mk(new THREE.BoxGeometry(0.24, 0.055, 0.07), accent, s * 0.2, 0.02, -0.46, 0, 0, s * 0.24, head);
+      mk(new THREE.SphereGeometry(0.05, 8, 8), trim, s * 0.31, 0.2, -0.44, 0, 0, 0, head);
+      let hx = s * 0.38, hy = 0.3, hz = 0.1, rx = -0.5;
+      for (let i = 0; i < 3; i++) {
+        mk(new THREE.ConeGeometry(0.14 - i * 0.032, 0.44, 6), i === 2 ? plate : steel,
+          hx, hy, hz, rx, 0, s * 0.18, head);
+        hy += 0.3; hz += 0.25; hx += s * 0.05; rx -= 0.24;
+      }
+      mk(new THREE.ConeGeometry(0.07, 0.34, 5), steel, s * 0.44, -0.1, 0.02, 0, 0, s * 1.05, head);
+    }
+    for (let i = 0; i < 3; i++) {
+      mk(new THREE.ConeGeometry(0.1, 0.38, 4), dark, 0, 0.34, 0.24 + i * 0.16, -0.32, 0, 0, head);
+    }
+    this.addHit(hitbox(0.58, 1.8, this, 'head', 4.16, 1.0));
+    this.bodyHit = this.addHit(hitbox(1.42, 1.0, this, 'body', 3.0, 1.25));
+    this.coreHit = this.addHit(hitbox(0.52, 2.6, this, 'core', 3.14));
 
-    this.coreHit = hitbox(0.5, 2.9, this, 'core');
-    this.coreHit.position.copy(this.core.position);
-    this.group.add(this.coreHit);
-    this.addHit(this.coreHit);
-
-    // hombros + cañones dobles
+    // ---------------------------------------------------------- hombros y cañones
     this.cannons = [];
     for (const s of [-1, 1]) {
-      const pauldron = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.95, 1.05), plate);
-      pauldron.position.set(s * 1.62, 3.1, 0);
-      this.group.add(pauldron);
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.52, 6), shell);
-      spike.position.set(s * 1.98, 3.74, 0);
-      this.group.add(spike);
-      for (const o of [-0.22, 0.22]) {
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.19, 1.15, 10), dark);
-        barrel.rotation.x = Math.PI / 2;
-        barrel.position.set(s * 1.62 + o, 3.02, -0.75);
-        this.group.add(barrel);
-        const glowRing = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.04, 6, 16), accent);
-        glowRing.position.set(s * 1.62 + o, 3.02, -1.32);
-        this.group.add(glowRing);
-        this.cannons.push(glowRing);
+      const sh = new THREE.Group();
+      sh.position.set(s * 1.55, 0.94, 0.02);
+      bust.add(sh);
+      mk(new THREE.SphereGeometry(0.42, 14, 12), dark, 0, 0, 0, 0, 0, 0, sh);
+      mk(new THREE.BoxGeometry(1.12, 0.42, 1.06), plate, s * 0.12, 0.26, 0, 0, 0, s * 0.16, sh);
+      mk(new THREE.BoxGeometry(0.94, 0.34, 0.96), hull, s * 0.2, 0.56, 0.02, 0, 0, s * 0.26, sh);
+      mk(new THREE.BoxGeometry(0.72, 0.28, 0.8), dark, s * 0.26, 0.84, 0.04, 0, 0, s * 0.34, sh);
+      for (let i = -1; i <= 1; i++) {
+        mk(new THREE.ConeGeometry(0.11, 0.56 + Math.abs(i) * 0.1, 5), steel,
+          s * (0.34 + i * 0.24), 1.02 - Math.abs(i) * 0.1, 0.2, -0.32, 0, s * 0.5, sh);
+      }
+      const gun = new THREE.Group();
+      gun.position.set(s * 0.08, 0.1, -0.6);
+      sh.add(gun);
+      mk(new THREE.BoxGeometry(0.64, 0.52, 0.52), dark, 0, 0, 0.14, 0, 0, 0, gun);
+      for (let b = -1; b <= 1; b++) {
+        mk(new THREE.CylinderGeometry(0.1, 0.12, 1.4, 8), steel, b * 0.21, 0, -0.66, Math.PI / 2, 0, 0, gun);
+        const ring = mk(new THREE.TorusGeometry(0.13, 0.03, 6, 12), accent, b * 0.21, 0, -1.32, 0, 0, 0, gun);
+        this.cannons.push(ring);
+      }
+      for (let f = 0; f < 4; f++) {
+        mk(new THREE.BoxGeometry(0.04, 0.32, 0.52), steel, s * (0.32 + f * 0.06), 0.08, -0.26, 0, 0, 0, gun);
       }
     }
 
-    // cabeza: casco, visor y antenas con balizas
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.56, 0.62), shell);
-    head.position.set(0, 3.75, -0.1);
-    this.group.add(head);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.16, 0.5), dark);
-    jaw.position.set(0, 3.5, -0.16);
-    this.group.add(jaw);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.12, 0.06), neonMat(0xff2d55));
-    visor.position.set(0, 3.79, -0.42);
-    this.group.add(visor);
-    this.addHit(hitbox(0.62, 3.75, this, 'head', 3.75));
-
+    // ---------------------------------------------------------- brazos con garras
+    this.arms = [];
     for (const s of [-1, 1]) {
-      const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.62, 6), dark);
-      antenna.position.set(s * 0.32, 4.14, 0.08);
-      antenna.rotation.z = -s * 0.32;
-      this.group.add(antenna);
-      const beacon = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: TEX.glow, color: 0xff2d55, transparent: true, opacity: 0.95,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      }));
-      beacon.position.set(s * 0.42, 4.44, 0.08);
-      beacon.scale.setScalar(0.95);
-      this.group.add(beacon);
+      const arm = new THREE.Group();
+      arm.position.set(s * 1.88, 0.7, 0.02);
+      bust.add(arm);
+      mk(new THREE.CylinderGeometry(0.26, 0.32, 1.05, 10), hull, 0, -0.55, 0, 0, 0, s * 0.08, arm);
+      mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, -1.12, 0.02, 0, 0, 0, arm);
+      mk(new THREE.BoxGeometry(0.6, 0.88, 0.64), dark, s * 0.06, -1.62, -0.04, 0.1, 0, 0, arm);
+      mk(new THREE.BoxGeometry(0.52, 0.42, 0.68), hull, s * 0.1, -1.98, -0.08, 0.1, 0, 0, arm);
+      for (let c = -1; c <= 1; c++) {
+        mk(new THREE.ConeGeometry(0.09, 0.58, 5), steel, s * 0.1 + c * 0.17, -2.36, -0.2, -0.38, c * 0.2, 0, arm);
+      }
+      mk(new THREE.BoxGeometry(0.1, 0.72, 0.14), accent, s * 0.35, -1.58, 0.02, 0.1, 0, 0, arm);
+      this.arms.push(arm);
     }
 
-    // espalda: reactores
+    // ---------------------------------------------------------- reactores
+    this.flames = [];
     for (const s of [-1, 1]) {
-      const thr = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, 0.85, 10), dark);
-      thr.rotation.x = Math.PI / 2;
-      thr.position.set(s * 0.62, 2.8, 0.82);
-      this.group.add(thr);
+      const st = new THREE.Group();
+      st.position.set(s * 0.78, 0.86, 0.72);
+      bust.add(st);
+      for (let i = 0; i < 3; i++) {
+        mk(new THREE.CylinderGeometry(0.16 - i * 0.02, 0.2, 0.62, 8), i === 1 ? plate : dark,
+          0, 0.34 + i * 0.44, 0, 0.12, 0, 0, st);
+        mk(new THREE.TorusGeometry(0.19, 0.03, 5, 12), cool, 0, 0.64 + i * 0.44, 0, Math.PI / 2, 0, 0, st);
+      }
       const flame = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: TEX.glow, color: 0x49e6ff, transparent: true, opacity: 0.6,
+        map: TEX.glow, color: 0x49e6ff, transparent: true, opacity: 0.7,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
-      flame.position.set(s * 0.62, 2.8, 1.28);
-      flame.scale.setScalar(1.7);
-      this.group.add(flame);
+      flame.position.set(0, 1.75, 0.08);
+      flame.scale.set(1.1, 2.3, 1);
+      st.add(flame);
+      this.flames.push(flame);
     }
 
-    // anillo de peligro en el suelo
+    // ---------------------------------------------------------- esquirlas orbitales
+    this.shards = [];
+    for (let i = 0; i < 8; i++) {
+      const sh = new THREE.Mesh(new THREE.TetrahedronGeometry(0.16), i % 2 ? trim : accent);
+      bust.add(sh);
+      this.shards.push(sh);
+    }
+    this.orbs = [];
+    for (const r of [1.02, 1.28]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.022, 4, 40), r > 1.1 ? cool : accent);
+      ring.position.set(0, 0.42, -0.82);
+      bust.add(ring);
+      this.orbs.push(ring);
+    }
+
+    // ---------------------------------------------------------- suelo
     this.hazard = new THREE.Mesh(
-      new THREE.RingGeometry(1.6, 3.0, 40),
+      new THREE.RingGeometry(1.75, 3.4, 48),
       new THREE.MeshBasicMaterial({
         color: 0xff2d55, transparent: true, opacity: 0.3,
         blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false
@@ -786,39 +875,86 @@ export class Boss extends Enemy {
     this.hazard.position.y = -0.52;
     this.group.add(this.hazard);
 
-    this.muzzle.position.set(0, 2.62, -1.35);
+    this.muzzle.position.set(0, 3.2, -1.7);
     this.charge.position.copy(this.muzzle.position);
     this.charge.scale.setScalar(2);
 
     // luces de estudio: sin ellas el chasis se lee como una masa negra
-    if (shell.emissive) shell.emissive.setHex(0x0a1420);
-    if (plate.emissive) plate.emissive.setHex(0x111a10);
-
-    const key = new THREE.PointLight(0xffd2a8, 420, 46, 2);
-    key.position.set(-3.4, 7.2, -6.8);
+    const key = new THREE.PointLight(0xffd2a8, 480, 50, 2);
+    key.position.set(-3.6, 7.4, -7.0);
     this.group.add(key);
-    const rim = new THREE.PointLight(0x49e6ff, 520, 52, 2);
-    rim.position.set(3.8, 8.6, 5.6);
+    const rim = new THREE.PointLight(0x49e6ff, 560, 56, 2);
+    rim.position.set(4.0, 8.8, 5.8);
     this.group.add(rim);
-    const under = new THREE.PointLight(0xff2d55, 180, 20, 2);
-    under.position.set(0, 0.8, -2.4);
+    const under = new THREE.PointLight(0xff2d55, 220, 22, 2);
+    under.position.set(0, 0.8, -2.5);
     this.group.add(under);
     this.keyLight = key;
     this.rimLight = rim;
 
-    // franjas encendidas en el pecho: leen la silueta a cualquier distancia
-    const trimMat = new THREE.MeshBasicMaterial({ color: 0xff9f43, toneMapped: false });
-    for (const y of [4.28, 5.06]) {
-      const band = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.07), trimMat);
-      band.position.set(0, y, -1.16);
-      this.group.add(band);
+    // franjas encendidas en las costillas: leen la silueta a 30 m
+    for (const y of [0.06, 0.86]) {
+      mk(new THREE.BoxGeometry(2.3, 0.07, 0.09), trim, 0, 3.72 + y, -1.14, 0, 0, 0);
+    }
+
+    // apoyo en el suelo: la caja real del titán baja varios metros del origen, así
+    // que sin este desplazamiento media máquina quedaba enterrada. Se mide en
+    // espacio LOCAL de la pieza (la escala del grupo se aplica al usarlo) para
+    // que siga siendo correcto si la escala se fija después de construir.
+    this.group.updateMatrixWorld(true);
+    {
+      const inv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
+      const m4 = new THREE.Matrix4();
+      let minLocalY = Infinity;
+      this.group.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        const box = o.geometry.boundingBox.clone().applyMatrix4(m4.multiplyMatrices(inv, o.matrixWorld));
+        if (box.min.y < minLocalY) minLocalY = box.min.y;
+      });
+      this.liftLocal = Number.isFinite(minLocalY) ? Math.max(0, -minLocalY + 0.02) : 0;
     }
   }
 
   _idle(dt, t) {
-    this.group.position.y = this.node.pos.y + Math.sin(t * 1.1) * 0.05;
+    this.group.position.y = this.node.pos.y + this._liftY() + Math.sin(t * 1.1) * 0.05;
     this.group.rotation.z = Math.sin(t * 0.7) * 0.008;
     const col = this.phase === 1 ? 0xff2d55 : this.phase === 2 ? 0xff9f43 : 0xffe066;
+    // respiración del torso y vaivén de brazos: rompe la pose de estatua
+    if (this.bust) {
+      this.bust.position.y = 2.72 + Math.sin(t * 1.25) * 0.045;
+      this.bust.rotation.x = Math.sin(t * 1.25 + 0.6) * 0.014;
+    }
+    if (this.arms) {
+      for (let i = 0; i < this.arms.length; i++) {
+        const s = i === 0 ? -1 : 1;
+        this.arms[i].rotation.x = Math.sin(t * 0.9 + i * 1.7) * 0.09;
+        this.arms[i].rotation.z = s * (0.06 + Math.sin(t * 0.7 + i) * 0.05);
+      }
+    }
+    // esquirlas orbitando el reactor
+    if (this.shards) {
+      for (let i = 0; i < this.shards.length; i++) {
+        const a = t * 1.15 + (i / this.shards.length) * Math.PI * 2;
+        const r = 1.35 + Math.sin(t * 2 + i) * 0.12;
+        this.shards[i].position.set(Math.cos(a) * r, 0.42 + Math.sin(a * 2 + i) * 0.5, -0.8 + Math.sin(a) * r * 0.45);
+        this.shards[i].rotation.set(t * 1.7 + i, t * 1.2, 0);
+        this.shards[i].material.color.setHex(col);
+      }
+    }
+    if (this.orbs) {
+      this.orbs[0].rotation.z += dt * (this.phase > 1 ? 2.4 : 1.2);
+      this.orbs[1].rotation.z -= dt * (this.phase > 2 ? 3.1 : 1.7);
+      this.orbs[0].material.color.setHex(col);
+    }
+    if (this.flames) {
+      for (let i = 0; i < this.flames.length; i++) {
+        const f = this.flames[i];
+        const k = 0.85 + Math.sin(t * 9 + i * 2) * 0.15;
+        f.scale.set(1.1 * k, 2.3 * k * (this.phase > 1 ? 1.25 : 1), 1);
+        f.material.opacity = 0.55 + Math.sin(t * 11 + i) * 0.2;
+      }
+    }
     if (this.core) {
       const pulse = 0.86 + Math.sin(t * 4) * 0.14;
       this.core.scale.setScalar(pulse);
@@ -830,7 +966,7 @@ export class Boss extends Enemy {
     }
     if (this.coreLight) {
       this.coreLight.color.setHex(col);
-      this.coreLight.intensity = 22 + Math.sin(t * 3.2) * 9;
+      this.coreLight.intensity = (this.phase > 1 ? 85 : 62) + Math.sin(t * 3.2) * 24;
     }
     if (this.hazard) {
       this.hazard.material.opacity = 0.2 + Math.sin(t * 2.4) * 0.11;
@@ -859,8 +995,66 @@ export class Boss extends Enemy {
     if (this.def.onPhase) this.def.onPhase(this, p);
   }
 
+  // El titán no es una torreta: se desplaza, esquiva en línea y, desde la
+  // fase 2, encadena anillos de proyectiles que obligan a moverse.
+  _liftY() {
+    return (this.liftLocal || 0) * (this.group.scale.y || 1);
+  }
+
+  _move(dt, t) {
+    const nx = this.node.pos.x, nz = this.node.pos.z;
+    if (this.dashT > 0) {
+      this.dashT -= dt;
+      const k = Math.min(1, 1 - Math.max(0, this.dashT) / this.dashDur);
+      const e = k * k * (3 - 2 * k);
+      this.group.position.x = this.dashFrom.x + (this.dashTo.x - this.dashFrom.x) * e;
+      this.group.position.z = this.dashFrom.z + (this.dashTo.z - this.dashFrom.z) * e;
+      return;
+    }
+    this.group.position.x = nx + Math.sin(t * 0.5 + this._sepSeed * 6) * 2.5;
+    this.group.position.z = nz + Math.sin(t * 0.27 + 1.4) * 1.3;
+    if (this.phase >= 2) {
+      this.dashCd = (this.dashCd === undefined ? 5.5 : this.dashCd) - dt;
+      if (this.dashCd <= 0) {
+        this.dashCd = 4.2 + Math.random() * 2.6;
+        this.dashDur = 0.42;
+        this.dashT = 0.42;
+        this.dashFrom = this.group.position.clone();
+        this.dashTo = new THREE.Vector3(nx + (Math.random() < 0.5 ? -4.2 : 4.2), this.node.pos.y + this._liftY(), nz + (Math.random() - 0.5) * 2.4);
+        if (this.world.fx) {
+          const q = this.group.position.clone();
+          q.y += 0.4;
+          this.world.fx.ring(q, 0x49e6ff, 4.6, 0.6);
+        }
+      }
+    }
+  }
+
+  _radial(dt) {
+    if (this.phase < 2) return;
+    this.radT = (this.radT === undefined ? 4.0 : this.radT) - dt;
+    if (this.radT > 0) return;
+    this.radT = this.phase >= 3 ? 3.4 : 5.2;
+    const origin = this.muzzle.getWorldPosition(new THREE.Vector3());
+    const p = this.getPlayer();
+    const n = this.phase >= 3 ? 12 : 9;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + this.age * 0.4;
+      const target = new THREE.Vector3(
+        p.x + Math.cos(a) * 2.2,
+        p.y + 0.15 + Math.sin(a * 2) * 0.5,
+        p.z + Math.sin(a) * 2.2
+      );
+      this.world.bolts.spawn(origin, target, this.def.boltSpeed * 1.2, 0xff2d55, this.def.damage);
+    }
+    if (this.world.fx) this.world.fx.ring(origin, 0xff2d55, 5.2, 0.55);
+    if (this.world.audio && this.world.audio.shot) this.world.audio.shot();
+  }
+
   // ráfaga en abanico desde los dos cañones
   _ai(dt, t) {
+    this._move(dt, t);
+    this._radial(dt);
     const aimT = this.aimTime;
     if (this.state === 'aim') {
       this.charge.material.opacity = Math.min(1, this.st / aimT) * 0.9;
@@ -975,18 +1169,31 @@ export class BoltField {
     this.list.push(o);
   }
 
+  _retire(b) {
+    b.g.visible = false;
+    const i = this.list.indexOf(b);
+    if (i >= 0) this.list.splice(i, 1);
+    if (this.pool.indexOf(b) === -1) this.pool.push(b);
+  }
+
   clear() {
     for (const o of this.list) {
       o.g.visible = false;
-      this.pool.push(o);
+      if (this.pool.indexOf(o) === -1) this.pool.push(o);
     }
     this.list.length = 0;
   }
 
   update(dt, playerPos, onPlayerHit) {
     const hitR2 = 0.55 * 0.55;
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      const b = this.list[i];
+    // El callback puede vaciar la lista (muerte del jugador → bolts.clear()).
+    // Sin este blindaje el bucle seguía con índices viejos, b quedaba
+    // undefined y la excepción congelaba el juego en cada frame: era el
+    // cuelgue que aparecía "en algunas partes".
+    const snapshot = this.list.slice();
+    for (let i = snapshot.length - 1; i >= 0; i--) {
+      const b = snapshot[i];
+      if (!b || this.list.indexOf(b) === -1) continue;
       b.life -= dt;
       const step = b.speed * dt;
       // barrido: comprueba varios puntos para no atravesar al jugador
@@ -1004,17 +1211,11 @@ export class BoltField {
 
       if (hit) {
         if (onPlayerHit) onPlayerHit(b);
-        b.g.visible = false;
-        this.pool.push(b);
-        this.list.splice(i, 1);
+        this._retire(b);
         continue;
       }
       // solo muere por vida: el jugador avanza y el origen deja de ser referencia
-      if (b.life <= 0) {
-        b.g.visible = false;
-        this.pool.push(b);
-        this.list.splice(i, 1);
-      }
+      if (b.life <= 0) this._retire(b);
     }
   }
 }
@@ -1432,10 +1633,10 @@ export const ENEMY_DEFS = {
     Class: Sniper, turn: 6
   },
   boss: {
-    kind: 'boss', hp: 900, score: 1500, color: 0xff9f43, scale: 2.8,
-    aimTime: 2.2, burst: 3, burstGap: 0.3, cool: 1.8,
-    boltSpeed: 14, spread: 0.55, damage: 7, rise: 1.0, riseTime: 0.9,
-    Class: Boss, turn: 2.2
+    kind: 'boss', hp: 900, score: 1500, color: 0xff9f43, scale: 3.1,
+    aimTime: 1.25, burst: 4, burstGap: 0.17, cool: 0.95,
+    boltSpeed: 23, spread: 0.95, damage: 12, rise: 1.0, riseTime: 0.9,
+    Class: Boss, turn: 3.2
   }
 };
 

@@ -318,9 +318,9 @@ export class Arena {
     this.sky.frustumCulled = false;
     this.root.add(this.sky);
 
-    this.hemi = new THREE.HemisphereLight(0x88bbff, 0x140a18, 0.55);
+    this.hemi = new THREE.HemisphereLight(0x9dc4ff, 0x241530, 0.9);
     scene.add(this.hemi);
-    this.key = new THREE.DirectionalLight(0xbfd8ff, 0.5);
+    this.key = new THREE.DirectionalLight(0xbfd8ff, 0.85);
     this.key.position.set(-8, 20, 6);
     scene.add(this.key);
     this.neonLights = [];

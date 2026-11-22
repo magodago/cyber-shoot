@@ -61,6 +61,12 @@ const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerH
 camera.position.set(0, 1.62, 0);
 scene.add(camera);
 
+// linterna del casco: lo que el jugador mira siempre recibe luz, así ningún
+// enemigo puede quedar como una silueta negra contra el fondo
+const helmetLight = new THREE.PointLight(0xd6e6ff, 34, 34, 2);
+helmetLight.position.set(0, 0.1, 0);
+camera.add(helmetLight);
+
 /* entorno de reflejos: sin environment, el metal de los enemigos sale negro.
    Gradiente simple (cielo azul / suelo violeta) convertido a PMREM: los cuerpos
    oro y plata tienen algo que reflejar y se recortan contra el fondo. */
@@ -700,7 +706,8 @@ function spawnOne(kind) {
     node = arena.pickNodeAhead(Math.random, 'ground', taken, 2.6, 10, 26, PLAYER);
   }
   if (!node) return false;
-  const bossHp = kind === 'boss' ? Math.round(1100 + S.level * 90) : undefined;
+  // un titán de 14 m no puede caer en dos segundos: ~30 s de fuego sostenido
+  const bossHp = kind === 'boss' ? Math.round(4800 + S.level * 400) : undefined;
   const e = makeEnemy(world, node, kind, bossHp);
   e.isBoss = kind === 'boss';
   enemies.push(e);
@@ -771,9 +778,10 @@ function updateWaves(dt) {
     if (S.waveT < -2.5 && aliveCount() > 0) rescueStuckEnemies();
     if (S.waveT < -14 && aliveCount() > 0) {
       for (const e of enemies) {
-        if (e && !e.dead) e.silentKill();
+        // el titán no se retira nunca: si vive, la oleada no está limpia
+        if (e && !e.dead && !e.isBoss) e.silentKill();
       }
-      S.waveT = -30;
+      if (aliveCount() === 0) S.waveT = -30;
     }
     if (S.waveT <= 0 && aliveCount() === 0) {
       S.waveIndex++;
