@@ -108,7 +108,7 @@ export function createCover(scene, opts = {}) {
       title.rotation.x = Math.sin(t * 0.5) * 0.035;
       glow.material.opacity = 0.34 + Math.sin(t * 1.5) * 0.08;
     },
-    show(v) { group.visible = v; }
+    show(v) { group.visible = v; document.body.classList.toggle('on-cover', !!v); }
   };
 }
 
