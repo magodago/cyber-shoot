@@ -119,124 +119,240 @@ function signTex(text, color, sub = '') {
 function roadSurface() {
   const W = 1024, H = 2048;
   const c = canvas(W, H), g = c.getContext('2d');
-  const PX = W / 19, PY = H / 40;
+  const rc = canvas(W, H), rg = rc.getContext('2d');
+  const bc = canvas(W, H), bg = bc.getContext('2d');
+  const pc = canvas(W, H), pg = pc.getContext('2d');
+  const PX = W / 19, PY = H / 40;      // 19 x 40 m por losa, 54 px/m
   const X = m => (m + 9.5) * PX;
   const Y = m => m * PY;
+  const rnd = (a, b) => a + Math.random() * (b - a);
 
-  g.fillStyle = '#191b1f';
+  // contorno irregular (grietas, baches, charcos)
+  const blobPath = (cx, cy, rx, ry, jag = 0.18, pts = 22) => {
+    const p = new Path2D();
+    for (let i = 0; i <= pts; i++) {
+      const a = (i / pts) * Math.PI * 2;
+      const k = 1 + (Math.random() - 0.5) * 2 * jag;
+      const px = cx + Math.cos(a) * rx * k;
+      const py = cy + Math.sin(a) * ry * k;
+      if (i) p.lineTo(px, py); else p.moveTo(px, py);
+    }
+    p.closePath();
+    return p;
+  };
+
+  // ---------------------------------------------------------- aglomerado
+  g.fillStyle = '#1a1c21';
   g.fillRect(0, 0, W, H);
+  rg.fillStyle = '#dcdcdc';            // 0.86 de rugosidad
+  rg.fillRect(0, 0, W, H);
+  bg.fillStyle = '#808080';
+  bg.fillRect(0, 0, W, H);
 
-  // manchas de betún y humedad
-  for (let i = 0; i < 90; i++) {
-    const x = Math.random() * W, y = Math.random() * H, r = 30 + Math.random() * 170;
-    const grd = g.createRadialGradient(x, y, 0, x, y, r);
-    grd.addColorStop(0, Math.random() < 0.5 ? 'rgba(76,80,88,0.15)' : 'rgba(3,4,6,0.22)');
-    grd.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grd;
-    g.fillRect(x - r, y - r, r * 2, r * 2);
+  // parches de obra: aglomerado de otro lote, más cerrado y con junta
+  for (let i = 0; i < 4; i++) {
+    const pw = rnd(1.4, 2.8) * PX, ph = rnd(2.0, 5.0) * PY;
+    const px = rnd(0, W - pw), py = rnd(0, H - ph);
+    g.save();
+    g.beginPath(); g.rect(px, py, pw, ph); g.clip();
+    g.fillStyle = i % 2 ? '#202329' : '#17191d';
+    g.fillRect(px, py, pw, ph);
+    for (let k = 0; k < 2600; k++) {
+      const v = 34 + Math.random() * 70;
+      g.fillStyle = `rgba(${v},${v + 2},${v + 6},${rnd(0.12, 0.5)})`;
+      g.fillRect(px + Math.random() * pw, py + Math.random() * ph, rnd(1.5, 3.5), rnd(1.5, 3.5));
+    }
+    g.restore();
+    // junta de sierra: filo oscuro + rebaba de betún
+    g.strokeStyle = 'rgba(6,7,9,0.9)'; g.lineWidth = 5;
+    g.strokeRect(px + 2, py + 2, pw - 4, ph - 4);
+    g.strokeStyle = 'rgba(52,56,64,0.35)'; g.lineWidth = 2;
+    g.strokeRect(px + 6, py + 6, pw - 12, ph - 12);
+    bg.strokeStyle = 'rgba(96,96,96,0.8)'; bg.lineWidth = 5;
+    bg.strokeRect(px + 2, py + 2, pw - 4, ph - 4);
   }
-  // árido
-  for (let i = 0; i < 42000; i++) {
-    const v = 45 + Math.random() * 92;
-    g.fillStyle = `rgba(${v},${v + 2},${v + 9},${0.05 + Math.random() * 0.15})`;
-    const s = Math.random() < 0.92 ? 1.6 : 3;
+
+  // árido grueso, cuarzo y grano fino
+  for (let i = 0; i < 22000; i++) {
+    const v = 40 + Math.random() * 85;
+    g.fillStyle = `rgba(${v},${v + 2},${v + 8},${rnd(0.16, 0.5)})`;
+    const s = rnd(1.4, 3.2);
+    const x = Math.random() * W, y = Math.random() * H;
+    g.beginPath(); g.arc(x, y, s * 0.5, 0, 6.2832); g.fill();
+  }
+  for (let i = 0; i < 2600; i++) {          // cuarzo que brilla con las luces
+    const v = 150 + Math.random() * 90;
+    g.fillStyle = `rgba(${v},${v},${v - 6},${rnd(0.14, 0.42)})`;
+    const s = rnd(0.8, 2.0);
     g.fillRect(Math.random() * W, Math.random() * H, s, s);
   }
-  // huellas de neumático: dos bandas por carril
-  for (const lane of [-7.1, -2.6, 2.6, 7.1]) {
-    for (const off of [-0.78, 0.78]) {
-      const grd = g.createLinearGradient(X(lane + off - 0.36), 0, X(lane + off + 0.36), 0);
-      grd.addColorStop(0, 'rgba(0,0,0,0)');
-      grd.addColorStop(0.5, 'rgba(0,0,0,0.14)');
-      grd.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = grd;
-      g.fillRect(X(lane + off - 0.36), 0, 0.72 * PX, H);
-    }
+  for (let i = 0; i < 46000; i++) {         // grano fino del betún
+    const v = 26 + Math.random() * 34;
+    g.fillStyle = `rgba(${v},${v + 1},${v + 3},${rnd(0.05, 0.16)})`;
+    g.fillRect(Math.random() * W, Math.random() * H, 1.2, 1.2);
   }
-  // juntas de hormigón y grietas ramificadas
-  g.strokeStyle = 'rgba(6,7,10,0.5)';
-  for (let i = 0; i < 26; i++) {
-    g.lineWidth = 1 + Math.random() * 2;
+  for (let i = 0; i < 20000; i++) {         // relieve del árido
+    const v = 128 + (Math.random() - 0.5) * 90;
+    bg.fillStyle = `rgba(${v},${v},${v},0.5)`;
+    const s = rnd(1.5, 3.2);
+    bg.beginPath(); bg.arc(Math.random() * W, Math.random() * H, s * 0.5, 0, 6.2832); bg.fill();
+  }
+
+  // grietas de fatiga, con ramificaciones y filo levantado
+  const crack = (x, y, len, ang, width, depth = 0) => {
+    g.lineCap = 'round';
+    let cx = x, cy = y;
     g.beginPath();
-    let x = Math.random() * W, y = Math.random() * H;
-    g.moveTo(x, y);
-    for (let k = 0; k < 6; k++) {
-      x += (Math.random() - 0.5) * 90; y += (Math.random() - 0.5) * 90;
+    g.moveTo(cx, cy);
+    const steps = 5 + ((len / 26) | 0);
+    for (let i = 0; i < steps; i++) {
+      ang += (Math.random() - 0.5) * 0.85;
+      cx += Math.cos(ang) * (len / steps);
+      cy += Math.sin(ang) * (len / steps);
+      g.lineTo(cx, cy);
+    }
+    g.strokeStyle = 'rgba(4,5,7,0.88)';
+    g.lineWidth = width;
+    g.stroke();
+    g.strokeStyle = 'rgba(120,126,136,0.13)';
+    g.lineWidth = width + 2.2;
+    g.stroke();
+    bg.strokeStyle = 'rgba(24,24,24,0.85)'; bg.lineWidth = width; bg.stroke();
+    if (depth < 2 && Math.random() < 0.8) {
+      crack(cx, cy, len * rnd(0.3, 0.55), ang + rnd(-1.1, 1.1), Math.max(0.8, width * 0.6), depth + 1);
+    }
+  };
+  for (let i = 0; i < 16; i++) {
+    crack(rnd(0, W), rnd(0, H), rnd(70, 240), Math.random() * 6.28, rnd(1.2, 3.4));
+  }
+
+  // sellado de juntas con betún: cordón negro y brillo central
+  for (let i = 0; i < 5; i++) {
+    let x = rnd(0, W), y = rnd(0, H);
+    const ang = rnd(-0.5, 0.5) + (Math.random() < 0.5 ? 0 : Math.PI / 2);
+    g.beginPath(); g.moveTo(x, y);
+    const pts = 26;
+    for (let k = 0; k < pts; k++) {
+      x += Math.cos(ang) * 26 + rnd(-9, 9);
+      y += Math.sin(ang) * 26 + rnd(-9, 9);
       g.lineTo(x, y);
     }
-    g.stroke();
-  }
-  // parches de obra
-  for (let i = 0; i < 3; i++) {
-    const pw = (1.6 + Math.random() * 2.4) * PX, ph = (2.4 + Math.random() * 4) * PY;
-    const px = Math.random() * (W - pw), py = Math.random() * (H - ph);
-    g.fillStyle = 'rgba(32,35,42,0.85)';
-    g.fillRect(px, py, pw, ph);
-    g.strokeStyle = 'rgba(6,7,9,0.85)';
-    g.lineWidth = 4;
-    g.strokeRect(px, py, pw, ph);
+    g.strokeStyle = 'rgba(7,8,10,0.92)'; g.lineWidth = rnd(5, 9); g.stroke();
+    g.strokeStyle = 'rgba(48,52,60,0.30)'; g.lineWidth = 2; g.stroke();
+    rg.strokeStyle = 'rgba(150,150,150,0.5)'; rg.lineWidth = 8; rg.stroke();
   }
 
-  // ---------------------------------------------------------------- pintura
-  const white = 'rgba(232,238,246,0.9)';
-  // bordes continuos
-  for (const s of [-1, 1]) {
-    g.fillStyle = white;
-    g.fillRect(X(s * 8.85) - 0.07 * PX, 0, 0.14 * PX, H);
-  }
-  // eje doble continuo
-  for (const s of [-1, 1]) {
-    g.fillStyle = white;
-    g.fillRect(X(s * 0.16) - 0.05 * PX, 0, 0.10 * PX, H);
-  }
-  // discontinua de separación de carriles: 3 m pintados / 5 m libres
-  for (let y = 8.4; y < 40; y += 8) {
-    for (const lx of [-4.35, 4.35]) {
-      g.fillStyle = white;
-      g.fillRect(X(lx) - 0.06 * PX, Y(y), 0.12 * PX, 3 * PY);
+  // huellas de neumático: goma pulida, más oscura y algo más lisa
+  for (const lane of [-7.1, -2.6, 2.6, 7.1]) {
+    for (const off of [-0.78, 0.78]) {
+      const x0 = X(lane + off - 0.34), w = 0.68 * PX;
+      const grd = g.createLinearGradient(x0, 0, x0 + w, 0);
+      grd.addColorStop(0, 'rgba(0,0,0,0)');
+      grd.addColorStop(0.5, 'rgba(0,0,0,0.16)');
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grd; g.fillRect(x0, 0, w, H);
+      const grd2 = rg.createLinearGradient(x0, 0, x0 + w, 0);
+      grd2.addColorStop(0, 'rgba(180,180,180,0)');
+      grd2.addColorStop(0.5, 'rgba(180,180,180,0.55)');
+      grd2.addColorStop(1, 'rgba(180,180,180,0)');
+      rg.fillStyle = grd2; rg.fillRect(x0, 0, w, H);
     }
   }
-  // paso de cebra: barras largas cruzando la calzada
-  for (let y = 2.2; y < 6.2; y += 1.0) {
-    g.fillStyle = 'rgba(238,243,250,0.92)';
-    g.fillRect(X(-9.15), Y(y), 18.3 * PX, 0.52 * PY);
-  }
-  // pintura gastada: el árido vuelve a asomar
-  for (let i = 0; i < 9000; i++) {
-    const v = 40 + Math.random() * 55;
-    g.fillStyle = `rgba(${v},${v},${v + 4},${0.25 + Math.random() * 0.45})`;
-    g.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 3, 1 + Math.random() * 3);
-  }
 
-  // alcantarillas
+  // ------------------------------------------------- superficie irregular
+  // baches: borde roto con piedras sueltas y fondo húmedo
+  const pothole = (mx, my, r) => {
+    const outer = blobPath(mx, my, r * 1.28, r * 1.12, 0.26, 20);
+    g.fillStyle = 'rgba(46,48,54,0.85)'; g.fill(outer);
+    for (let i = 0; i < 300; i++) {           // piedras del borde
+      const a = Math.random() * 6.2832, rr = r * rnd(1.02, 1.34);
+      const v = 60 + Math.random() * 70;
+      g.fillStyle = `rgba(${v},${v + 1},${v + 4},${rnd(0.2, 0.6)})`;
+      const s = rnd(1.4, 3.4);
+      g.fillRect(mx + Math.cos(a) * rr, my + Math.sin(a) * rr, s, s);
+    }
+    const inner = blobPath(mx, my, r * 0.92, r * 0.8, 0.2, 18);
+    g.fillStyle = '#0a0b0e'; g.fill(inner);
+    const grd = g.createRadialGradient(mx - r * 0.2, my - r * 0.2, r * 0.1, mx, my, r * 0.9);
+    grd.addColorStop(0, 'rgba(30,33,40,0.9)');
+    grd.addColorStop(1, 'rgba(0,0,0,0.95)');
+    g.fillStyle = grd; g.fill(inner);
+    g.strokeStyle = 'rgba(96,100,110,0.28)'; g.lineWidth = 3;
+    g.stroke(inner);
+    rg.fillStyle = 'rgba(30,30,30,0.9)'; rg.fill(inner);       // fondo encharcado
+    bg.fillStyle = 'rgba(20,20,20,0.9)'; bg.fill(outer);       // hueco
+    for (let i = 0; i < 4; i++) {
+      crack(mx + rnd(-r, r), my + rnd(-r, r), rnd(40, 120), Math.random() * 6.28, rnd(1, 2.4));
+    }
+  };
+  pothole(X(-6.4), Y(24.6), 0.42 * PX);
+  pothole(X(4.1), Y(8.2), 0.30 * PX);
+  pothole(X(7.9), Y(37.4), 0.24 * PX);
+
+  // ------------------------------------------------------------ pintura
+  // se pinta en su propio lienzo para poder erosionarla sin tocar el asfalto
+  const white = 'rgba(233,236,232,1)';
+  const paintBar = (x, y, w, h) => { pg.fillStyle = white; pg.fillRect(x, y, w, h); };
+  for (const s of [-1, 1]) paintBar(X(s * 8.85) - 0.07 * PX, 0, 0.14 * PX, H);   // bordes
+  for (const s of [-1, 1]) paintBar(X(s * 0.16) - 0.05 * PX, 0, 0.10 * PX, H);   // eje doble
+  for (let y = 8.4; y < 40; y += 8) {
+    for (const lx of [-4.35, 4.35]) paintBar(X(lx) - 0.06 * PX, Y(y), 0.12 * PX, 3 * PY);
+  }
+  for (let y = 2.2; y < 6.2; y += 1.0) paintBar(X(-9.15), Y(y), 18.3 * PX, 0.52 * PY); // cebra
+  // pintura gastada: agujeros, arañazos y desconchones
+  pg.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 14000; i++) {
+    pg.fillStyle = `rgba(0,0,0,${rnd(0.25, 0.9)})`;
+    const s = rnd(0.8, 3.6);
+    pg.fillRect(Math.random() * W, Math.random() * H, s, s);
+  }
+  for (let i = 0; i < 90; i++) {          // arañazos largos en la pintura
+    pg.strokeStyle = 'rgba(0,0,0,0.5)';
+    pg.lineWidth = rnd(1, 3);
+    pg.beginPath();
+    let x = Math.random() * W, y = Math.random() * H;
+    pg.moveTo(x, y); pg.lineTo(x + rnd(-40, 40), y + rnd(-160, 160));
+    pg.stroke();
+  }
+  pg.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 0.94; g.drawImage(pc, 0, 0); g.globalAlpha = 1;
+
+  // ------------------------------------------------------- alcantarillas
   const manhole = (mx, my) => {
     const r = 0.44 * PX;
-    g.save();
-    g.translate(mx, my);
-    g.fillStyle = '#0b0d11'; g.beginPath(); g.arc(0, 0, r * 1.18, 0, 6.2832); g.fill();
-    g.fillStyle = '#25282e'; g.beginPath(); g.arc(0, 0, r, 0, 6.2832); g.fill();
-    g.strokeStyle = 'rgba(96,104,116,0.55)'; g.lineWidth = 2;
-    g.beginPath(); g.arc(0, 0, r * 0.84, 0, 6.2832); g.stroke();
-    g.strokeStyle = 'rgba(8,10,13,0.8)'; g.lineWidth = 2;
-    for (let i = -3; i <= 3; i++) {
-      g.beginPath(); g.moveTo(-r * 0.8, i * r * 0.25); g.lineTo(r * 0.8, i * r * 0.25); g.stroke();
-      g.beginPath(); g.moveTo(i * r * 0.25, -r * 0.8); g.lineTo(i * r * 0.25, r * 0.8); g.stroke();
+    g.save(); g.translate(mx, my);
+    g.fillStyle = '#0a0c0f'; g.beginPath(); g.arc(0, 0, r * 1.2, 0, 6.2832); g.fill();
+    const ring = g.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
+    ring.addColorStop(0, '#3b3f46'); ring.addColorStop(0.75, '#24272c'); ring.addColorStop(1, '#141619');
+    g.fillStyle = ring; g.beginPath(); g.arc(0, 0, r, 0, 6.2832); g.fill();
+    g.strokeStyle = 'rgba(150,158,168,0.30)'; g.lineWidth = 2;
+    g.beginPath(); g.arc(0, 0, r * 0.86, 0, 6.2832); g.stroke();
+    g.strokeStyle = 'rgba(6,7,9,0.85)'; g.lineWidth = 2.4;
+    for (let i = -3; i <= 3; i++) {                        // trama de fundición
+      g.beginPath(); g.moveTo(-r * 0.78, i * r * 0.24); g.lineTo(r * 0.78, i * r * 0.24); g.stroke();
+      g.beginPath(); g.moveTo(i * r * 0.24, -r * 0.78); g.lineTo(i * r * 0.24, r * 0.78); g.stroke();
     }
-    g.strokeStyle = 'rgba(180,196,216,0.22)'; g.lineWidth = 3;
-    g.beginPath(); g.arc(0, 0, r * 1.18, Math.PI * 1.08, Math.PI * 1.56); g.stroke();
+    for (let i = 0; i < 6; i++) {                          // tornillos
+      const a = (i / 6) * 6.2832;
+      g.fillStyle = 'rgba(120,126,134,0.5)';
+      g.beginPath(); g.arc(Math.cos(a) * r * 0.93, Math.sin(a) * r * 0.93, 2.6, 0, 6.2832); g.fill();
+    }
+    g.strokeStyle = 'rgba(190,200,214,0.20)'; g.lineWidth = 3;   // brillo de borde
+    g.beginPath(); g.arc(0, 0, r * 1.02, Math.PI * 1.05, Math.PI * 1.55); g.stroke();
     g.restore();
+    rg.fillStyle = 'rgba(90,90,90,0.85)'; rg.beginPath(); rg.arc(mx, my, r, 0, 6.2832); rg.fill();
+    bg.fillStyle = 'rgba(150,150,150,0.7)'; bg.beginPath(); bg.arc(mx, my, r, 0, 6.2832); bg.fill();
   };
   manhole(X(-2.6), Y(13.2));
   manhole(X(6.9), Y(29.5));
 
-  // desagües junto al bordillo
+  // rejillas de desagüe junto al bordillo
   const drain = (dx, dy) => {
     const w = 0.42 * PX, h = 1.05 * PY;
-    g.fillStyle = '#0a0c10';
-    g.fillRect(dx - w / 2, dy - h / 2, w, h);
-    g.strokeStyle = 'rgba(126,136,150,0.4)'; g.lineWidth = 2;
+    g.fillStyle = '#090b0e'; g.fillRect(dx - w / 2, dy - h / 2, w, h);
+    g.strokeStyle = 'rgba(132,140,152,0.42)'; g.lineWidth = 2.4;
     g.strokeRect(dx - w / 2, dy - h / 2, w, h);
-    g.strokeStyle = 'rgba(5,6,8,0.95)'; g.lineWidth = 3;
+    g.strokeStyle = 'rgba(4,5,7,0.95)'; g.lineWidth = 3.2;
     for (let i = 1; i < 9; i++) {
       const yy = dy - h / 2 + i * (h / 9);
       g.beginPath(); g.moveTo(dx - w / 2 + 3, yy); g.lineTo(dx + w / 2 - 3, yy); g.stroke();
@@ -245,32 +361,49 @@ function roadSurface() {
   drain(X(-8.4), Y(17.5));
   drain(X(8.4), Y(34.0));
 
+  // ---------------------------------------- humedad, aceite y charcos
+  // manchas de aceite: oscuras y algo brillantes
+  for (let i = 0; i < 7; i++) {
+    const cx = rnd(0, W), cy = rnd(0, H), r = rnd(26, 96);
+    const p = blobPath(cx, cy, r, r * rnd(0.5, 1), 0.3, 16);
+    g.fillStyle = 'rgba(4,5,7,0.5)'; g.fill(p);
+    rg.fillStyle = 'rgba(96,96,96,0.4)'; rg.fill(p);
+  }
+  // charcos: agua quieta que refleja el neón de arriba
+  const puddle = (cx, cy, rx, ry) => {
+    const p = blobPath(cx, cy, rx, ry, 0.16, 26);
+    g.save(); g.clip(p);
+    g.fillStyle = 'rgba(10,12,16,0.92)'; g.fillRect(cx - rx * 1.4, cy - ry * 1.4, rx * 2.8, ry * 2.8);
+    g.fillStyle = 'rgba(24,30,40,0.5)'; g.fillRect(cx - rx * 1.4, cy - ry * 1.4, rx * 2.8, ry * 2.8);
+    g.restore();
+    g.strokeStyle = 'rgba(120,128,140,0.16)'; g.lineWidth = 2; g.stroke(p);
+    rg.fillStyle = 'rgba(26,26,26,0.95)'; rg.fill(p);       // espejo: rugosidad baja
+    bg.fillStyle = 'rgba(108,108,108,0.9)'; bg.fill(p);
+  };
+  puddle(X(-3.4), Y(19.4), 1.5 * PX, 2.6 * PY);
+  puddle(X(5.6), Y(31.2), 1.1 * PX, 1.9 * PY);
+  puddle(X(-7.6), Y(6.6), 0.9 * PX, 1.4 * PY);
+
+  // suciedad general: polvo de la calzada, al final de todo
+  for (let i = 0; i < 12000; i++) {
+    const v = 60 + Math.random() * 40;
+    g.fillStyle = `rgba(${v},${v - 2},${v - 8},${rnd(0.02, 0.07)})`;
+    g.fillRect(Math.random() * W, Math.random() * H, rnd(1, 3), rnd(1, 3));
+  }
+
   const map = new THREE.CanvasTexture(c);
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
   map.colorSpace = THREE.SRGBColorSpace;
 
-  // rugosidad: asfalto seco, pintura algo más lisa y manchas húmedas que brillan
-  const rc = canvas(256, 512), rg = rc.getContext('2d');
-  rg.fillStyle = '#e2e2e2';
-  rg.fillRect(0, 0, 256, 512);
-  for (let i = 0; i < 9000; i++) {
-    const v = 170 + Math.random() * 85;
-    rg.fillStyle = `rgba(${v},${v},${v},${0.25 + Math.random() * 0.5})`;
-    rg.fillRect(Math.random() * 256, Math.random() * 512, 2, 2);
-  }
-  for (let i = 0; i < 22; i++) {
-    const x = Math.random() * 256, y = Math.random() * 512, r = 14 + Math.random() * 60;
-    const grd = rg.createRadialGradient(x, y, 0, x, y, r);
-    grd.addColorStop(0, 'rgba(96,96,96,0.55)');
-    grd.addColorStop(1, 'rgba(96,96,96,0)');
-    rg.fillStyle = grd;
-    rg.fillRect(x - r, y - r, r * 2, r * 2);
-  }
   const rough = new THREE.CanvasTexture(rc);
   rough.wrapS = rough.wrapT = THREE.RepeatWrapping;
 
-  return { map, rough };
+  const bump = new THREE.CanvasTexture(bc);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+
+  return { map, rough, bump };
 }
+
 
 // ---------------------------------------------------------------------------
 // Acera / hormigón: losas de 60 cm con junta, manchas y grano
@@ -637,13 +770,15 @@ export class Arena {
     // desplaza con el avance (offset.y) y el neón queda en el bordillo.
     const tex = roadSurface();
     this.roadMat = new THREE.MeshStandardMaterial({
-      map: tex.map, roughnessMap: tex.rough, color: 0xbac2ce,
-      roughness: 0.62, metalness: 0.24, envMapIntensity: 1.25
+      map: tex.map, roughnessMap: tex.rough, bumpMap: tex.bump, bumpScale: 0.025,
+      color: 0xffffff, roughness: 1.0, metalness: 0.03, envMapIntensity: 1.0
     });
     tex.map.repeat.set(1, 10.5);
     tex.rough.repeat.set(1, 10.5);
+    tex.bump.repeat.set(1, 10.5);
     tex.map.anisotropy = 8;
     tex.rough.anisotropy = 4;
+    tex.bump.anisotropy = 4;
 
     const road = new THREE.Mesh(new THREE.PlaneGeometry(19, 420), this.roadMat);
     road.rotation.x = -Math.PI / 2;

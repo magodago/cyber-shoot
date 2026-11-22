@@ -25,26 +25,32 @@ function gripTex() {
   const w = 128, h = 256, c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d');
-  g.fillStyle = '#191b1f'; g.fillRect(0, 0, w, h);
+  // cachas de oro con picado: el dibujo es dorado, el metal lo pone el material
+  const grd0 = g.createLinearGradient(0, 0, w, h);
+  grd0.addColorStop(0, '#d8a63a');
+  grd0.addColorStop(0.35, '#f3cd75');
+  grd0.addColorStop(0.62, '#c9962c');
+  grd0.addColorStop(1, '#e8bb55');
+  g.fillStyle = grd0; g.fillRect(0, 0, w, h);
   for (let i = 0; i < 2600; i++) {
-    const v = 30 + Math.random() * 40;
-    g.fillStyle = `rgba(${v},${v + 3},${v + 7},${0.22 + Math.random() * 0.3})`;
+    const v = 150 + Math.random() * 90;
+    g.fillStyle = `rgba(${v},${v * 0.82 | 0},${v * 0.36 | 0},${0.10 + Math.random() * 0.18})`;
     g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
   }
   // picado: puntos hundidos con un filo claro arriba a la izquierda
   for (let y = 8; y < h - 8; y += 7) {
     for (let x = 8 + (((y / 7) | 0) % 2) * 3.5; x < w - 8; x += 7) {
-      g.fillStyle = 'rgba(6,7,9,0.6)';
+      g.fillStyle = 'rgba(70,44,6,0.72)';
       g.beginPath(); g.arc(x, y, 2.2, 0, 6.2832); g.fill();
-      g.fillStyle = 'rgba(126,134,148,0.18)';
+      g.fillStyle = 'rgba(255,238,190,0.55)';
       g.beginPath(); g.arc(x - 0.7, y - 0.8, 1.1, 0, 6.2832); g.fill();
     }
   }
   const grd = g.createLinearGradient(0, 0, w, 0);
-  grd.addColorStop(0, 'rgba(150,160,175,0.12)');
+  grd.addColorStop(0, 'rgba(255,242,205,0.22)');
   grd.addColorStop(0.14, 'rgba(0,0,0,0)');
   grd.addColorStop(0.86, 'rgba(0,0,0,0)');
-  grd.addColorStop(1, 'rgba(150,160,175,0.12)');
+  grd.addColorStop(1, 'rgba(255,242,205,0.22)');
   g.fillStyle = grd; g.fillRect(0, 0, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -74,20 +80,21 @@ function plate(pts, w, bevel = 0.0016, hole = null) {
 }
 
 /** Pistola de servicio 1:1 (~19 cm). Empuñadura en el origen, cañón hacia -Z. */
-function buildPistol(accent, side = 1, finish = 'silver') {
+function buildPistol(accent, side = 1, finish = 'gold') {
   const g = new THREE.Group();
   const body = new THREE.Group();
   g.add(body);
 
-  // Dos acabados: la derecha en oro pulido y la izquierda en plata. El
-  // armazón sigue en polímero grafito para que el metal tenga contraste.
-  const gold = finish === 'gold';
-  const steel  = mat(gold ? 0xc99a3e : 0xc8d2df, { metal: 0.96, rough: gold ? 0.26 : 0.18 });
-  const steelL = mat(gold ? 0xf0cd7c : 0xf2f7ff, { metal: 1.00, rough: 0.09 });
-  const trim   = mat(gold ? 0x8d6425 : 0x8d98a6, { metal: 0.92, rough: 0.44 });
-  const poly   = mat(0x15181d, { metal: 0.06, rough: 0.74 });
-  const poly2  = mat(0x21262e, { metal: 0.06, rough: 0.62 });
-  const dark   = mat(0x06070a, { metal: 0.25, rough: 0.52 });
+  // Las DOS pistolas enteras en oro: no hay partes de polímero ni acero
+  // vistas, todo el arma es metal dorado pulido. El color base es el del oro
+  // real (1.00, 0.77, 0.34) y el brillo sale del entorno PMREM de la escena.
+  const gold = true; // las dos pistolas son de oro, sin acero ni polímero a la vista
+  const steel  = mat(0xe8b23c, { metal: 1.00, rough: 0.24 });   // cuerpo
+  const steelL = mat(0xffe7a8, { metal: 1.00, rough: 0.09 });   // aristas pulidas
+  const trim   = mat(0xa87a24, { metal: 1.00, rough: 0.36 });   // rebajes
+  const poly   = mat(0xc9972f, { metal: 0.98, rough: 0.30 });   // armazón
+  const poly2  = mat(0xb98a28, { metal: 0.94, rough: 0.52 });   // cachas
+  const dark   = mat(0x4a3008, { metal: 0.90, rough: 0.40 });   // ánima y huecos
   const neon   = mat(accent, { metal: 0.3, rough: 0.35, emis: accent, ei: 1.5 });
 
   // --- corredera: perfil con chaflán delantero y lomo rebajado ------------
@@ -211,8 +218,8 @@ function buildPistol(accent, side = 1, finish = 'silver') {
   gt.wrapS = gt.wrapT = THREE.RepeatWrapping;
   gt.repeat.set(9, 9);
   const gripMat = new THREE.MeshStandardMaterial({
-    map: gt, color: 0xcfd6e0, metalness: 0.04, roughness: 0.80,
-    envMapIntensity: 0.9
+    map: gt, color: 0xffffff, metalness: 1.0, roughness: 0.38,
+    envMapIntensity: 1.0
   });
   const grip = new THREE.Mesh(plate([
     [-0.0062, -0.0175], [-0.0022, -0.0320], [-0.0028, -0.0430],
@@ -285,8 +292,8 @@ function buildPistol(accent, side = 1, finish = 'silver') {
   petals.position.copy(muzzle.position);
   petals.visible = false;
   body.add(petals);
-  const petalGeo = new THREE.ConeGeometry(0.0135, 0.082, 5, 1, true);
-  petalGeo.translate(0, 0.041, 0);
+  const petalGeo = new THREE.ConeGeometry(0.0145, 0.150, 5, 1, true);
+  petalGeo.translate(0, 0.075, 0);
   petalGeo.rotateX(-Math.PI / 2);
   const petalMat = new THREE.MeshBasicMaterial({
     color: 0xff8a1e, transparent: true, opacity: 0.85,
@@ -314,6 +321,29 @@ function buildPistol(accent, side = 1, finish = 'silver') {
     sp.position.set((Math.random() - 0.5) * 0.03, (Math.random() - 0.5) * 0.03, -0.02 - Math.random() * 0.05);
     sparks.add(sp);
   }
+  // lengua de fuego larga: conos alineados con el cañón. Un sprite siempre
+  // mira a cámara, así que el fogonazo largo tiene que ser geometría.
+  const tongueGroup = new THREE.Group();
+  tongueGroup.position.copy(muzzle.position);
+  tongueGroup.visible = false;
+  body.add(tongueGroup);
+  const tongueGeo = new THREE.ConeGeometry(0.030, 0.42, 9, 2, true);
+  tongueGeo.translate(0, 0.21, 0);
+  tongueGeo.rotateX(-Math.PI / 2);
+  const tongue = new THREE.Mesh(tongueGeo, new THREE.MeshBasicMaterial({
+    color: 0xff5a08, transparent: true, opacity: 0.55,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  }));
+  tongueGroup.add(tongue);
+  const tongueCoreGeo = new THREE.ConeGeometry(0.014, 0.24, 9, 2, true);
+  tongueCoreGeo.translate(0, 0.12, 0);
+  tongueCoreGeo.rotateX(-Math.PI / 2);
+  const tongueCore = new THREE.Mesh(tongueCoreGeo, new THREE.MeshBasicMaterial({
+    color: 0xffe8a8, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  }));
+  tongueGroup.add(tongueCore);
+
   // luz real: el fogonazo alumbra el arma y el suelo durante un instante
   const flashLight = new THREE.PointLight(0xff7a18, 0, 3.4, 2);
   flashLight.position.copy(muzzle.position);
@@ -332,7 +362,7 @@ function buildPistol(accent, side = 1, finish = 'silver') {
   body.position.set(0, 0.062, 0.004);
   g.scale.setScalar(1.15);
 
-  return { group: g, muzzle, flash, flashMid, flashCore, petals, sparks, flashLight, ammoRing };
+  return { group: g, muzzle, flash, flashMid, flashCore, petals, sparks, tongueGroup, tongue, tongueCore, flashLight, ammoRing };
 }
 
 export class WeaponSystem {
@@ -354,7 +384,7 @@ export class WeaponSystem {
     for (const hand of ['L', 'R']) {
       const accent = hand === 'R' ? GUN_COL.neonA : GUN_COL.neonB;
       // derecha en oro, izquierda en plata (dos piezas distintas en la mano)
-      const built = buildPistol(accent, hand === 'R' ? 1 : -1, hand === 'R' ? 'gold' : 'silver');
+      const built = buildPistol(accent, hand === 'R' ? 1 : -1, 'gold'); // las dos manos en oro
       scene.add(built.group);
       this.hands[hand] = {
         hand,
@@ -365,7 +395,7 @@ export class WeaponSystem {
         reloadT: 0,
         cool: 0,
         kick: 0,
-        flashT: 0,
+        flashT: 0, flashDur: 0.11,
         controller: null,
         attached: null,
         base: {
@@ -503,7 +533,7 @@ export class WeaponSystem {
     h.ammo--;
     h.cool = this.fireDelay;
     h.kick = 1;
-    h.flashT = 0.075;
+    h.flashT = h.flashDur;
     h.shots++;
 
     const origin = h.muzzle.getWorldPosition(new THREE.Vector3());
@@ -731,29 +761,38 @@ export class WeaponSystem {
       }
 
       const lit = h.flashT > 0;
-      const k = lit ? h.flashT / 0.055 : 0;
+      const k = lit ? Math.min(1, h.flashT / h.flashDur) : 0;  // 1 al disparar, 0 al apagarse
+      const grow = 1 - k;
       h.flash.visible = h.flashMid.visible = h.flashCore.visible = lit;
-      h.petals.visible = h.sparks.visible = lit;
+      h.petals.visible = h.sparks.visible = h.tongueGroup.visible = lit;
       if (lit) {
         // halo exterior rojo-naranja que se abre al disparar
         h.flash.material.opacity = 0.55 + 0.35 * k;
-        h.flash.scale.setScalar(0.26 + (1 - k) * 0.16 + Math.random() * 0.05);
+        h.flash.scale.setScalar(0.30 + grow * 0.22 + Math.random() * 0.05);
         // llama media naranja
         h.flashMid.material.opacity = 0.80;
-        h.flashMid.scale.set(0.17 + Math.random() * 0.05, 0.21 + Math.random() * 0.06, 1);
+        h.flashMid.scale.set(0.19 + Math.random() * 0.05, 0.30 + Math.random() * 0.08, 1);
         // núcleo amarillo-blanco alargado en la dirección del cañón
         h.flashCore.material.opacity = 1;
-        h.flashCore.scale.set(0.085 + Math.random() * 0.03, 0.17 + (1 - k) * 0.10, 1);
+        h.flashCore.scale.set(0.095 + Math.random() * 0.03, 0.26 + grow * 0.20, 1);
         // pétalos: giran y respiran en cada disparo
         h.petals.rotation.z = Math.random() * Math.PI * 2;
-        const ps = 0.8 + Math.random() * 0.45;
-        h.petals.scale.set(ps, ps, 0.75 + Math.random() * 0.7);
+        const ps = 0.85 + Math.random() * 0.45;
+        h.petals.scale.set(ps, ps, 0.9 + grow * 1.2);
         h.sparks.rotation.z = Math.random() * Math.PI;
-        h.flashLight.intensity = 5.5 * k + 2.5;
+        // lengua larga: se estira en el eje del cañón y se recoge al apagarse
+        h.tongueGroup.scale.set(1, 1, 0.55 + grow * 1.15);
+        h.tongueGroup.rotation.z = Math.random() * 0.5 - 0.25;
+        h.tongueGroup.rotation.x = Math.random() * 0.3 - 0.15;
+        h.tongue.material.opacity = 0.62 * (0.35 + grow * 0.65);
+        h.tongueCore.material.opacity = 0.95 * (0.3 + grow * 0.7);
+        h.flashLight.intensity = 7.0 * k + 3.0;
       } else {
         h.flash.material.opacity = 0;
         h.flashMid.material.opacity = 0;
         h.flashCore.material.opacity = 0;
+        h.tongue.material.opacity = 0;
+        h.tongueCore.material.opacity = 0;
         h.flashLight.intensity = Math.max(0, h.flashLight.intensity - dt * 120);
       }
 

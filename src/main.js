@@ -239,23 +239,25 @@ function hitTest(origin, dir, hand) {
 }
 
 function assistShot(origin, dir) {
+  // Asistencia de puntería ESTRICTA. Antes el radio crecía con la distancia
+  // (base*1.1 + 0.42 + t*0.011 ≈ 1.4 m a 30 m) y mataba enemigos a los que no
+  // apuntabas. Ahora sólo engancha si el rayo pasa por el cono de la mira:
+  // ~1.3° de error angular y como mucho 30 cm de desvío, con 5 cm de holgura.
+  const ANG = 0.023;      // rad ≈ 1.3°
+  const MAXOFF = 0.30;    // m de desvío máximo a cualquier distancia
   const v = new THREE.Vector3();
   let best = null;
   let bestT = Infinity;
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (!e || e.dead || !e.hitMeshes || !e.hitMeshes.length) continue;
-    // balcones, azoteas y francos lejanos: TODAS las hitboxes (cuerpo y
-    // cabeza), no solo la primera; si no, apuntar arriba nunca enganchaba
     for (let j = 0; j < e.hitMeshes.length; j++) {
       e.hitMeshes[j].getWorldPosition(v);
       v.sub(origin);
       const t = v.dot(dir);
       if (t < 2.5 || t > 110) continue;
-      const base = (e.def && e.def.radius ? e.def.radius : 0.62);
-      // manga ancha sólo en el visor: a 30 m la mano tiembla más que el dedo
-      const rad = base * 1.1 + 0.42 + t * 0.011;
-      const off = v.clone().addScaledVector(dir, -t).length();
+      const rad = Math.min(MAXOFF, t * ANG) + 0.05;
+      const off = v.addScaledVector(dir, -t).length();
       if (off > rad) continue;
       if (t < bestT) { bestT = t; best = { e, point: origin.clone().addScaledVector(dir, t) }; }
       break;
