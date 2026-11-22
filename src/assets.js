@@ -25,6 +25,16 @@ const DEFS = {
   lamp:        { id: 'street_lamp_01',            h: 6.40, where: 'curb', weight: 1 },
   wallLamp:    { id: 'industrial_wall_lamp',      h: 0.85, where: 'wall', y: 4.60, weight: 2 },
   container:   { id: 'industrial_pastic_container', h: 1.55, where: 'walk', weight: 2 },
+  // munición y arma escaneada como atrezo de calle
+  ammo:        { id: 'ammo_box',                 h: 0.30, where: 'walk', weight: 2 },
+  rifle:       { id: 'bolt_action_rifle_7_62',    h: 1.02, where: 'wall', rot: [0, 0, Math.PI / 2], lean: 0.09, weight: 2 },
+};
+
+// Los escaneos de Poly Haven son kits: traen variantes y piezas sueltas.
+// Se quedan solo las del arma montada (variante _a, cargador lleno).
+const LIMPIAR = {
+  service_pistol: /_b$|magazine_empty|_bullet/,
+  bolt_action_rifle_7_62: /_b$|_bullet_54mm/,
 };
 
 const GROUND = 0.14;        // altura de la acera sobre el asfalto
@@ -34,8 +44,9 @@ let decorated = false;
 
 /* ------------------------------------------------------------------ carga */
 
-function normalizar(scene, h) {
+function normalizar(scene, h, rot) {
   // pivote en el centro de la base: escala a la altura pedida y baja al suelo
+  if (rot) scene.rotation.set(rot[0] || 0, rot[1] || 0, rot[2] || 0);
   const box = new THREE.Box3().setFromObject(scene);
   const size = box.getSize(new THREE.Vector3());
   const s = size.y > 0.0001 ? h / size.y : 1;
@@ -69,6 +80,12 @@ function cargar(id, intento = 0) {
             m.needsUpdate = true;
           }
         });
+        const re = LIMPIAR[id];
+        if (re) {
+          const fuera = [];
+          gltf.scene.traverse((o) => { if (re.test(o.name)) fuera.push(o); });
+          for (const o of fuera) o.parent && o.parent.remove(o);
+        }
         resolve(gltf.scene);
       },
       undefined,
@@ -101,6 +118,7 @@ function clonar(def, b, z, rotY, extraY = 0) {
   const o = tpl.clone(true);
   o.position.set(xDe(def, b), (def.y !== undefined ? def.y : GROUND) + extraY, z);
   o.rotation.y = rotY;
+  if (def.lean) o.rotation.x = def.lean;
   b.g.add(o);
 }
 
@@ -167,9 +185,77 @@ export async function initAssets({ renderer, scene, arena }) {
   for (const [id, scene3d] of cargados) {
     if (!scene3d) continue;
     const def = Object.values(DEFS).find((d) => d.id === id);
-    templates[id] = normalizar(scene3d, def.h);
+    templates[id] = normalizar(scene3d, def.h, def.rot);
     ok++;
   }
   amueblar(arena);
   console.info('[assets] props cargados:', ok, '/', ids.length);
+}
+
+/* ------------------------------------------------------------------ armas */
+
+// Ajuste fino del arma escaneada en la mano. Las cotas de referencia salen del
+// viewmodel procedural de src/weapon.js: boca del cañón en z = -0.108 y plano
+// superior de la corredera en y = 0.021. Todo retoque se hace aquí.
+const ARMA_AJUSTE = {
+  escala: 0.92,   // 1 = tamaño real del escaneo (la pistola mide 24 cm)
+  atras: 0.0,     // + aleja el arma de la cámara (hacia la mano)
+  arriba: 0.0,    // + sube el arma
+  lado: 0.0,      // + la desplaza a la derecha
+};
+
+// bbox sólo de mallas visibles: los escaneos traen piezas apagadas y variantes
+function bboxVisible(root) {
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh || o.visible === false) return;
+    const pos = o.geometry && o.geometry.attributes && o.geometry.attributes.position;
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      box.expandByPoint(v);
+    }
+  });
+  return box;
+}
+
+// Sustituye la pistola procedural por el escaneo de Poly Haven conservando los
+// efectos (fogonazo, chispas, luz) y el retroceso, que siguen en weapon.js.
+export async function skinWeapons(system) {
+  if (!system || !system.hands) return;
+  if (new URLSearchParams(location.search).get('guns') === 'gold') return;
+  if (!loader) loader = new GLTFLoader();
+
+  const src = await cargar('service_pistol');
+  if (!src) return;
+
+  for (const k of ['R', 'L']) {
+    const h = system.hands[k];
+    if (!h || !h.body || !h.gunParts) continue;
+
+    const skin = src.clone(true);
+    // el escaneo apunta a +X; el visor mira a -Z
+    skin.rotation.y = Math.PI / 2;
+
+    const box = bboxVisible(skin);
+    const size = box.getSize(new THREE.Vector3());
+    if (size.z < 0.05) { console.warn('[assets] arma no válida', k, size.toArray()); continue; }
+
+    const A = ARMA_AJUSTE;
+    const s = A.escala;
+    skin.scale.setScalar(s);
+    skin.position.set(
+      -(box.min.x + box.max.x) * 0.5 * s + A.lado,
+      0.021 - box.max.y * s + A.arriba,
+      -0.108 - box.min.z * s + A.atras
+    );
+
+    for (const p of h.gunParts) p.visible = false;
+    if (h.ammoRing) h.ammoRing.visible = false;
+    h.body.add(skin);
+    h.skin = skin;
+  }
+  console.info('[assets] pistola escaneada montada');
 }

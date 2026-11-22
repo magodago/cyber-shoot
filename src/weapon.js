@@ -362,7 +362,12 @@ function buildPistol(accent, side = 1, finish = 'gold') {
   body.position.set(0, 0.062, 0.004);
   g.scale.setScalar(1.15);
 
-  return { group: g, muzzle, flash, flashMid, flashCore, petals, sparks, tongueGroup, tongue, tongueCore, flashLight, ammoRing };
+  // Piezas propias del arma (sin efectos): si llega un modelo escaneado se
+  // apagan todas y el fogonazo sigue naciendo del mismo muzzle.
+  const efectos = new Set([muzzle, flash, flashMid, flashCore, petals, sparks, tongueGroup, flashLight]);
+  const gunParts = body.children.filter((c) => !efectos.has(c) && !c.isLight);
+
+  return { group: g, body, gunParts, muzzle, flash, flashMid, flashCore, petals, sparks, tongueGroup, tongue, tongueCore, flashLight, ammoRing };
 }
 
 export class WeaponSystem {

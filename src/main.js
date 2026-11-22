@@ -6,12 +6,12 @@ import * as THREE from 'three';
 import { Arena, PALETTES } from './arena.js?v=19';
 import { FX } from './fx.js?v=19';
 import { GameAudio } from './audio.js?v=19';
-import { WeaponSystem } from './weapon.js?v=19';
+import { WeaponSystem } from './weapon.js?v=20';
 import { makeEnemy, BoltField } from './enemies.js?v=19';
 import { Music } from './music.js?v=19';
 import { createCover } from './cover.js?v=19';
 import { createStory } from './story.js?v=19';
-import { initAssets } from './assets.js?v=1';
+import { initAssets, skinWeapons } from './assets.js?v=2';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -119,6 +119,8 @@ const weapon = new WeaponSystem({
   hitTest, onShot, onHit, onDry
 });
 weapon.attachControllers(renderer);
+// armas escaneadas CC0 sobre el viewmodel (kg-old: ?guns=gold devuelve el arma de oro)
+skinWeapons(weapon).catch((e) => console.warn('[assets] armas', e));
 
 /* ------------------------------------------------------------------ mundo (para enemigos) */
 const world = {

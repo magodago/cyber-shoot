@@ -16,6 +16,9 @@ MODELS = [
     "street_lamp_01",
     "industrial_wall_lamp",
     "industrial_pastic_container",
+    "service_pistol",
+    "bolt_action_rifle_7_62",
+    "ammo_box",
 ]
 HDRIS = ["cobblestone_street_night"]
 RES = "1k"
