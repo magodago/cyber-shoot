@@ -11,6 +11,7 @@ import { makeEnemy, BoltField } from './enemies.js?v=19';
 import { Music } from './music.js?v=19';
 import { createCover } from './cover.js?v=19';
 import { createStory } from './story.js?v=19';
+import { initAssets } from './assets.js?v=1';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -105,6 +106,8 @@ const audio = new GameAudio();
 const fx = new FX(scene);
 const music = new Music(audio);
 const arena = new Arena(scene);
+// prototipo proto-assets: props escaneados + HDRI real (si falla, se juega igual)
+initAssets({ renderer, scene, arena }).catch((e) => console.warn('[assets]', e));
 const bolts = new BoltField(scene);
 
 const enemies = [];
