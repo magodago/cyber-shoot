@@ -3,14 +3,14 @@
 // aéreas y terrestres; jefes cada 3 niveles; tienda entre niveles que se dispara.
 
 import * as THREE from 'three';
-import { Arena, PALETTES } from './arena.js?v=16';
-import { FX } from './fx.js?v=16';
-import { GameAudio } from './audio.js?v=16';
-import { WeaponSystem } from './weapon.js?v=16';
-import { makeEnemy, BoltField } from './enemies.js?v=16';
-import { Music } from './music.js?v=16';
-import { createCover } from './cover.js?v=16';
-import { createStory } from './story.js?v=16';
+import { Arena, PALETTES } from './arena.js?v=19';
+import { FX } from './fx.js?v=19';
+import { GameAudio } from './audio.js?v=19';
+import { WeaponSystem } from './weapon.js?v=19';
+import { makeEnemy, BoltField } from './enemies.js?v=19';
+import { Music } from './music.js?v=19';
+import { createCover } from './cover.js?v=19';
+import { createStory } from './story.js?v=19';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -58,6 +58,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
+renderer.xr.setFoveation(0.55);   // mas nitidez en el centro del visor
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();

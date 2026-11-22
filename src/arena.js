@@ -471,6 +471,64 @@ function lampTex() {
 }
 
 // nube suave: varias puffs radiales sumadas; se usa en sprites aditivos
+// manto de nubes procedural, sin costuras: R = forma base, G = detalle, B = media
+function cloudDeckTex() {
+  const S = 256;
+  const c = canvas(S);
+  const g = c.getContext('2d');
+  const img = g.createImageData(S, S);
+  const mk = (n) => {
+    const a = new Float32Array(n * n);
+    for (let i = 0; i < a.length; i++) a[i] = Math.random();
+    return { n, a };
+  };
+  const grids = (sizes) => sizes.map(n => mk(n));
+  const A = grids([6, 12, 24, 48]);
+  const B = grids([10, 20, 40, 80]);
+  const C = grids([8, 16, 32]);
+  const smp = (gr, u, v) => {
+    const n = gr.n, a = gr.a;
+    const x = u * n, y = v * n;
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const fx = x - x0, fy = y - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const i0 = ((x0 % n) + n) % n, j0 = ((y0 % n) + n) % n;
+    const i1 = (i0 + 1) % n, j1 = (j0 + 1) % n;
+    const v00 = a[j0 * n + i0], v10 = a[j0 * n + i1];
+    const v01 = a[j1 * n + i0], v11 = a[j1 * n + i1];
+    return (v00 * (1 - sx) + v10 * sx) * (1 - sy) + (v01 * (1 - sx) + v11 * sx) * sy;
+  };
+  const fbm = (gs, u, v, off) => {
+    let sum = 0, amp = 0.55, tot = 0;
+    for (let i = 0; i < gs.length; i++) {
+      sum += smp(gs[i], u + off * (i + 1) * 0.19, v + off * (i + 1) * 0.07) * amp;
+      tot += amp; amp *= 0.5;
+    }
+    return sum / tot;
+  };
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const u = x / S, v = y / S;
+      const r = fbm(A, u, v, 0.0);
+      const gg = fbm(B, u, v, 0.37);
+      const bb = fbm(C, u, v, 0.71);
+      const o = (y * S + x) * 4;
+      img.data[o] = Math.max(0, Math.min(255, (r - 0.5) * 235 + 138));
+      img.data[o + 1] = Math.max(0, Math.min(255, (gg - 0.5) * 245 + 128));
+      img.data[o + 2] = Math.max(0, Math.min(255, (bb - 0.5) * 230 + 128));
+      img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = 4;
+  return t;
+}
+
 function cloudTex() {
   const s = 256, c = canvas(s), g = c.getContext('2d');
   g.clearRect(0, 0, s, s);
@@ -603,23 +661,82 @@ export class Arena {
       uniforms: {
         cTop: { value: new THREE.Color(0x080d1a) },
         cMid: { value: new THREE.Color(0x0d0716) },
-        cBot: { value: new THREE.Color(0xff2d7a) }
+        cBot: { value: new THREE.Color(0xff2d7a) },
+        cAccent: { value: new THREE.Color(0x49e6ff) },
+        uTime: { value: 0 },
+        uCloud: { value: 1.0 },
+        uCover: { value: 0.44 },
+        uFlash: { value: 0 },
+        uDeck: { value: cloudDeckTex() },
+        uMoonDir: { value: new THREE.Vector3(0.0, 0.42, -1.0).normalize() }
       },
       vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `
-        uniform vec3 cTop, cMid, cBot; varying vec3 vP;
+        uniform vec3 cTop, cMid, cBot, cAccent;
+        uniform float uTime, uCloud, uCover, uFlash;
+        uniform sampler2D uDeck;
+        uniform vec3 uMoonDir;
+        varying vec3 vP;
+
+        float band(float x, float k){ float t = x * k; return exp(-t * t); }
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+
         void main(){
           vec3 d = normalize(vP);
           float h = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
-          // base muy oscura: el neón del horizonte solo aporta una insinuación
-          vec3 c = mix(cBot * 0.14, cMid, smoothstep(0.44, 0.62, h));
-          c = mix(c, cTop, smoothstep(0.58, 0.98, h));
-          // línea de luz pegada al horizonte
-          float band = exp(-pow((h - 0.505) * 34.0, 2.0));
-          c += cBot * band * 0.30;
-          // halo difuso de ciudad
-          float glow = exp(-pow((h - 0.5) * 10.0, 2.0));
-          c += cBot * glow * 0.05;
+
+          // --- gradiente de la cupula: noche arriba, neon abajo ---
+          vec3 c = mix(cBot * 0.16, cMid, smoothstep(0.44, 0.68, h));
+          c = mix(c, cTop, smoothstep(0.62, 1.0, h));
+
+          // --- resplandor de la ciudad contra el horizonte ---
+          c += cBot * band(h - 0.505, 26.0) * 0.42;
+          c += cBot * band(h - 0.500, 8.0) * 0.10;
+          // aire con polvo de neon sobre la avenida
+          c += cAccent * band(h - 0.585, 4.0) * 0.065;
+          // vetas tenues de contaminacion luminica subiendo
+          float st = sin(d.x * 22.0 + uTime * 0.09) * sin(d.z * 17.0 - uTime * 0.06);
+          c += cAccent * 0.012 * smoothstep(0.52, 1.0, h) * (0.5 + 0.5 * st);
+
+          // --- dos mantos de nubes: cumulos bajos + cirros altos ---
+          if (uCloud > 0.001 && d.y > -0.02) {
+            vec2 uv = d.xz / max(d.y + 0.22, 0.30);
+            vec2 f1 = vec2(uTime * 0.0045, uTime * 0.0018);
+            vec2 f2 = vec2(-uTime * 0.0090, uTime * 0.0034);
+
+            float base = texture2D(uDeck, uv * 0.95 + f1).r;
+            float det  = texture2D(uDeck, uv * 2.30 - f1 * 1.7).g;
+            float high = texture2D(uDeck, uv * 0.42 + f2).b;
+            float lit  = texture2D(uDeck, uv * 0.95 + f1 + vec2(0.012, 0.006)).r;
+
+            float dens = base * 0.66 + det * 0.34;
+            float cover = smoothstep(uCover, uCover + 0.30, dens);
+            float cover2 = smoothstep(uCover + 0.14, uCover + 0.52, high) * 0.62;
+
+            float alt = smoothstep(-0.01, 0.12, d.y) * (1.0 - smoothstep(0.80, 1.0, d.y) * 0.55);
+
+            vec3 dark = mix(cMid, cBot, 0.42) * 1.35;
+            vec3 bright = mix(cBot * 0.55, vec3(0.74, 0.82, 0.98), 0.72);
+            float rim = clamp((base - lit) * 8.0 + 0.42, 0.0, 1.0);
+            vec3 cc = mix(dark, bright, rim);
+
+            // la luna por detras del manto: borde plateado
+            float md = max(dot(d, uMoonDir), 0.0);
+            cc += vec3(0.40, 0.50, 0.72) * pow(md, 3.0) * (0.35 + 0.65 * rim) * 0.9;
+
+            // panza baja: se come el neon de la calle
+            cc = mix(cc, cBot * 0.60 + cMid * 0.40, smoothstep(0.24, 0.0, d.y) * 0.55);
+
+            float a = max(cover * alt * uCloud * 0.97, cover2 * alt * uCloud * 0.62);
+            c = mix(c, cc, a);
+          }
+
+          // --- relampago lejano ---
+          c += vec3(0.60, 0.70, 0.95) * uFlash * (0.25 + 0.75 * clamp(d.y + 0.1, 0.0, 1.0));
+
+          // --- grano fino: rompe el degradado plano ---
+          c += (hash(gl_FragCoord.xy + uTime) - 0.5) * 0.012;
+
           gl_FragColor = vec4(c, 1.0);
         }`
     });
@@ -652,7 +769,6 @@ export class Arena {
     this._roadmarks();
     this._wetStreaks();
     this._skyline();
-    this._clouds();
     this._moon();
     this._stars();
     this._airTraffic();
@@ -1427,7 +1543,7 @@ export class Arena {
   _airTraffic() {
     this.air = [];
     const cols = [0x49e6ff, 0xff4fd8, 0xffe066, 0xff9f43];
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 30; i++) {
       const m = new THREE.SpriteMaterial({
         map: TEX.lamp, color: cols[i % cols.length], transparent: true,
         opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, fog: false
@@ -1452,16 +1568,19 @@ export class Arena {
   // Haces de búsqueda desde azoteas + relámpago lejano.
   _searchlights() {
     const mat = () => new THREE.MeshBasicMaterial({
-      color: 0x7fb8ff, transparent: true, opacity: 0.045,
+      color: 0x9fd0ff, transparent: true, opacity: 0.075,
       depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false
     });
     this.beams = [];
-    const spots = [[-15, 22, -8, -0.35], [16, 26, -26, 0.42], [-13, 20, 20, 0.3]];
+    const spots = [
+      [-13, 24, -14, -0.38], [14, 28, -34, 0.44], [-11, 22, 22, 0.30],
+      [10, 30, -62, -0.26], [-6, 34, -96, 0.20]
+    ];
     for (const [x, y, z, tilt] of spots) {
       const g = new THREE.Group();
       g.position.set(x, y, z);
-      const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 5.5, 58, 14, 1, true), mat());
-      cone.position.y = 29;
+      const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 8.5, 96, 16, 1, true), mat());
+      cone.position.y = 48;
       g.add(cone);
       g.rotation.z = tilt;
       this.root.add(g);
@@ -1571,32 +1690,151 @@ export class Arena {
     this.root.add(this.rain);
   }
 
+  // autopista aerea: la avenida es una corriente de coches voladores
   _cars() {
-    for (let i = 0; i < 6; i++) {
-      const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.5, 0.9),
-        new THREE.MeshStandardMaterial({ color: 0x11161f, metalness: 0.9, roughness: 0.3 }));
-      g.add(body);
-      const col = [0x49e6ff, 0xff4fd8, 0xffe066][i % 3];
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.8),
-        new THREE.MeshBasicMaterial({ color: col }));
-      tail.position.set(-1.1, 0, 0);
-      g.add(tail);
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: TEX.glow, color: col, transparent: true, opacity: 0.7,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      }));
-      glow.scale.setScalar(2.6);
-      glow.position.set(-1.3, 0, 0);
-      g.add(glow);
-      g.position.set((Math.random() - 0.5) * 70, 15 + Math.random() * 16, (Math.random() - 0.5) * 60);
-      g.userData = {
-        speed: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 8),
-        y: g.position.y, ph: Math.random() * 6.28
-      };
-      this.root.add(g);
-      this.cars.push(g);
+    const lanes = [
+      { x: -9.4, y: 12.4, dir: 1, speed: 14, n: 15 },
+      { x: -6.0, y: 15.2, dir: 1, speed: 17, n: 15 },
+      { x: -2.4, y: 18.4, dir: -1, speed: 20, n: 15 },
+      { x: 1.4, y: 21.2, dir: 1, speed: 23, n: 15 },
+      { x: 5.2, y: 24.8, dir: -1, speed: 26, n: 14 },
+      { x: 8.8, y: 14.0, dir: -1, speed: 16, n: 15 },
+      { x: -8.2, y: 29.2, dir: -1, speed: 29, n: 13 },
+      { x: 3.6, y: 33.2, dir: 1, speed: 33, n: 13 },
+      { x: -3.4, y: 37.6, dir: -1, speed: 36, n: 12 },
+      { x: 7.2, y: 42.6, dir: 1, speed: 40, n: 11 },
+      { x: -7.0, y: 47.8, dir: 1, speed: 44, n: 10 },
+      { x: 0.8, y: 54.0, dir: -1, speed: 48, n: 10 }
+    ];
+    let N = 0;
+    lanes.forEach(l => { N += l.n; });
+    this.carData = [];
+    this.carN = N;
+
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x18202e, metalness: 0.85, roughness: 0.34 });
+    const cabMat = new THREE.MeshStandardMaterial({
+      color: 0x060a12, metalness: 0.5, roughness: 0.16,
+      emissive: 0x0a2a44, emissiveIntensity: 0.9
+    });
+    this.carCabMat = cabMat;
+    this.carBodyM = new THREE.InstancedMesh(new THREE.BoxGeometry(1.95, 0.8, 3.9), bodyMat, N);
+    this.carCabM = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 0.55, 1.7), cabMat, N);
+    this.carBodyM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.carCabM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.carBodyM.frustumCulled = false;
+    this.carCabM.frustumCulled = false;
+    this.scene.add(this.carBodyM, this.carCabM);
+
+    const col = new THREE.Color();
+    this.carDummy = new THREE.Object3D();
+    let k = 0;
+    for (const ln of lanes) {
+      const gap = 190 / ln.n;
+      for (let i = 0; i < ln.n; i++) {
+        this.carData.push({
+          x: ln.x + (Math.random() - 0.5) * 0.7,
+          y: ln.y + (Math.random() - 0.5) * 1.4,
+          z: -95 + i * gap + Math.random() * gap * 0.7,
+          dir: ln.dir,
+          speed: ln.speed * (0.86 + Math.random() * 0.3),
+          s: 0.85 + Math.random() * 0.5,
+          ph: Math.random() * 6.28,
+          roll: 0.04 + Math.random() * 0.09
+        });
+        const t = Math.random();
+        if (t < 0.58) col.setHex(0x141c2a);
+        else if (t < 0.78) col.setHex(0x1b2a3c);
+        else if (t < 0.92) col.setHex(0x2a1620);
+        else col.setHex(0x102a26);
+        this.carBodyM.setColorAt(k++, col);
+        if (this.carBodyM.instanceColor) this.carBodyM.instanceColor.needsUpdate = true;
+      }
     }
+
+    // un solo Points para faros, pilotos y bajos de neon (3 puntos por coche)
+    const P = N * 3;
+    const lp = new Float32Array(P * 3);
+    const lc = new Float32Array(P * 3);
+    for (let i = 0; i < N; i++) {
+      const o = i * 9;
+      lc[o] = 0.86; lc[o + 1] = 0.94; lc[o + 2] = 1.0;
+      lc[o + 3] = 1.0; lc[o + 4] = 0.15; lc[o + 5] = 0.30;
+      lc[o + 6] = 0.29; lc[o + 7] = 0.90; lc[o + 8] = 1.0;
+    }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+    lg.setAttribute('color', new THREE.BufferAttribute(lc, 3));
+    this.carLights = new THREE.Points(lg, new THREE.PointsMaterial({
+      size: 2.4, map: TEX.glow, vertexColors: true, transparent: true,
+      opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false,
+      sizeAttenuation: true, toneMapped: false
+    }));
+    this.carLights.frustumCulled = false;
+    this.scene.add(this.carLights);
+
+    // estela de cada coche: una linea aditiva que se apaga en la cola
+    const tpos = new Float32Array(N * 6);
+    const tcol = new Float32Array(N * 6);
+    for (let i = 0; i < N; i++) {
+      const o = i * 6;
+      tcol[o] = 0.62; tcol[o + 1] = 0.88; tcol[o + 2] = 1.0;
+    }
+    const tg = new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.BufferAttribute(tpos, 3));
+    tg.setAttribute('color', new THREE.BufferAttribute(tcol, 3));
+    this.carTrails = new THREE.LineSegments(tg, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
+    this.carTrails.frustumCulled = false;
+    this.scene.add(this.carTrails);
+  }
+
+  _moveTraffic(dt, t) {
+    if (!this.carData || !this.carLights) return;
+    const d = this.carDummy;
+    const pz = this.playerZ || 0;
+    const attr = this.carLights.geometry.attributes.position;
+    const arr = attr.array;
+    const N = this.carN;
+    for (let i = 0; i < N; i++) {
+      const c = this.carData[i];
+      c.z += c.dir * c.speed * dt;
+      const rel = c.z - pz;
+      if (rel > 130) c.z = pz - 130 - Math.random() * 10;
+      else if (rel < -130) c.z = pz + 130 + Math.random() * 10;
+      const bob = Math.sin(t * 1.3 + c.ph) * 0.13;
+      const y = c.y + bob;
+      const yaw = c.dir > 0 ? 0 : Math.PI;
+      d.position.set(c.x, y, c.z);
+      d.rotation.set(Math.sin(t * 0.7 + c.ph) * 0.02, yaw, c.roll * Math.sin(t * 0.5 + c.ph));
+      d.scale.setScalar(c.s);
+      d.updateMatrix();
+      this.carBodyM.setMatrixAt(i, d.matrix);
+      d.position.set(c.x, y + 0.62 * c.s, c.z - c.dir * 0.35 * c.s);
+      d.scale.setScalar(c.s * 0.98);
+      d.updateMatrix();
+      this.carCabM.setMatrixAt(i, d.matrix);
+      const o = i * 9;
+      arr[o] = c.x; arr[o + 1] = y; arr[o + 2] = c.z + c.dir * 2.1 * c.s;
+      arr[o + 3] = c.x; arr[o + 4] = y; arr[o + 5] = c.z - c.dir * 2.1 * c.s;
+      arr[o + 6] = c.x; arr[o + 7] = y - 0.5 * c.s; arr[o + 8] = c.z;
+    }
+    // estelas: cola proporcional a la velocidad
+    if (this.carTrails) {
+      const tr = this.carTrails.geometry.attributes.position.array;
+      for (let i = 0; i < N; i++) {
+        const c = this.carData[i];
+        const o = i * 6;
+        const len = 3.0 + c.speed * 0.34;
+        tr[o] = c.x; tr[o + 1] = c.y; tr[o + 2] = c.z - c.dir * 1.5;
+        tr[o + 3] = c.x; tr[o + 4] = c.y; tr[o + 5] = c.z - c.dir * (1.5 + len);
+      }
+      this.carTrails.geometry.attributes.position.needsUpdate = true;
+    }
+    this.carBodyM.instanceMatrix.needsUpdate = true;
+    this.carCabM.instanceMatrix.needsUpdate = true;
+    attr.needsUpdate = true;
   }
 
   _steamVents() {
@@ -1614,12 +1852,13 @@ export class Arena {
   }
 
   // paleta por nivel
+
   setPalette(p) {
     this.pal = p;
     this.skyMat.uniforms.cTop.value.setHex(p.sky[0]);
     this.skyMat.uniforms.cMid.value.setHex(p.sky[1]);
     this.skyMat.uniforms.cBot.value.setHex(p.sky[2]);
-    this.scene.fog = new THREE.FogExp2(p.fog, 0.014);
+    this.scene.fog = new THREE.FogExp2(p.fog, 0.0115);
     this.scene.background = new THREE.Color(p.fog);
     if (this.rimGlow) this.rimGlow.color.setHex(p.a);
     this.rainMat.color.setHex(p.a === 0xff9f43 ? 0xffd0a0 : 0x9fd8ff);
@@ -1638,16 +1877,24 @@ export class Arena {
     this.hemi.groundColor.setHex(p.b);
     this.hemi.intensity = 0.7;
 
-    // cielo: nubes y luna se tiñen con la paleta del tramo
-    if (this.clouds) {
-      const tc = new THREE.Color();
-      this.clouds.forEach(c => {
-        if (c.layer === 'low') tc.setHex(0xff7cc0).lerp(new THREE.Color(p.a), 0.22);
-        else if (c.layer === 'mid') tc.setHex(0xbfd4ff).lerp(new THREE.Color(p.b), 0.28);
-        else tc.setHex(0x9cc0ff).lerp(new THREE.Color(p.a), 0.35);
-        c.s.material.color.copy(tc);
-      });
+    // cielo: el manto de nubes respira con la paleta y el tramo
+    this.skyMat.uniforms.cAccent.value.setHex(p.a);
+    this.skyMat.uniforms.uCloud.value = 1.0;
+    this.skyMat.uniforms.uCover.value = 0.46 - ((p.rain || 0.7) * 0.055);
+
+    // trafico: bajos de neon y cabinas cambian de color con el sector
+    if (this.carLights) {
+      const ca = new THREE.Color(p.a), cb = new THREE.Color(p.b);
+      const col = this.carLights.geometry.attributes.color;
+      for (let i = 0; i < this.carN; i++) {
+        const c = i % 2 ? ca : cb;
+        col.array[i * 9 + 6] = c.r * 0.95;
+        col.array[i * 9 + 7] = c.g * 0.95;
+        col.array[i * 9 + 8] = c.b * 0.95;
+      }
+      col.needsUpdate = true;
     }
+    if (this.carCabMat) this.carCabMat.emissive.setHex(p.a).multiplyScalar(0.22);
     // nada de blanco puro: el bloom lo convertía en un fogonazo sin cráteres
     if (this.moon) this.moon.material.color.setHex(0xc2d2ea);
     if (this.moonHalo) this.moonHalo.material.color.setHex(p.a);
@@ -1844,6 +2091,7 @@ export class Arena {
 
   update(dt, t) {
     this.t += dt;
+    this._moveTraffic(dt, t);
     // lluvia
     const p = this.rain.geometry.attributes.position.array;
     const sp = (this.pal && this.pal.rain) || 0.7;
@@ -1879,17 +2127,19 @@ export class Arena {
       b.g.rotation.x = Math.sin(t * 0.13 + b.ph * 2) * 0.22;
     }
     if (this.moonHalo) this.moonHalo.material.opacity = 0.13 + Math.sin(t * 0.7) * 0.04;
+    if (this.skyMat) this.skyMat.uniforms.uTime.value = t;
     if (this.stormFlash) {
       this.flashT -= dt;
       if (this.flashT <= 0) {
-        this.flashT = 9 + Math.random() * 14;
+        this.flashT = 6 + Math.random() * 10;
         this.flashA = 1;
         this.stormFlash.position.x = -60 + Math.random() * 120;
         this.stormFlash.position.y = 34 + Math.random() * 18;
       }
       this.flashA = Math.max(0, this.flashA - dt * 3.2);
       const f = this.flashA * (0.55 + 0.45 * Math.abs(Math.sin(t * 47)));
-      this.stormFlash.material.opacity = f * 0.5;
+      this.stormFlash.material.opacity = f * 0.55;
+      if (this.skyMat) this.skyMat.uniforms.uFlash.value = f * 0.9;
     }
 
     // coches
