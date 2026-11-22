@@ -1102,6 +1102,7 @@ function showCover() {
   const b = $('#ov-btn');
   b.textContent = 'JUGAR';
   b.onclick = onPlay;
+  document.getElementById('hud').style.opacity = '0';
   b.style.display = 'block';
 }
 
@@ -1123,6 +1124,7 @@ function hideOverlay() {
   const ov = $('#overlay');
   if (ov) ov.style.display = 'none';
   document.body.classList.remove('on-cover');
+  document.getElementById('hud').style.opacity = '1';
 }
 
 /* ------------------------------------------------------------------ entrada */
