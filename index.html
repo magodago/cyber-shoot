@@ -108,6 +108,8 @@
   #overlay.cover #ov-sub,#overlay.cover #ov-extra{display:none}
   #overlay.cover #ov-btn{box-shadow:0 0 0 1px rgba(73,230,255,.55),0 18px 60px rgba(73,230,255,.4);
     animation:coverPulse 2.6s ease-in-out infinite}
+  #overlay.cover #ov-btn2{display:none!important}
+  #ov-btn2{margin-top:10px}
   @keyframes coverPulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
   .fps{position:absolute;right:10px;top:10px;font-size:11px;color:rgba(255,255,255,.3);letter-spacing:.1em}
 </style>
@@ -151,6 +153,7 @@
       <p id="ov-sub"></p>
       <div id="ov-extra"></div>
       <button id="ov-btn">JUGAR</button>
+      <button id="ov-btn2" class="ghost" style="display:none">VOLVER AL INICIO</button>
     </div>
   </div>
 
@@ -164,6 +167,6 @@
       window.__err = 'promise: ' + (e.reason && e.reason.message || e.reason);
     });
   </script>
-  <script type="module" src="./src/main.js?v=14"></script>
+  <script type="module" src="./src/main.js?v=15"></script>
 </body>
 </html>

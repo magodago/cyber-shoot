@@ -112,28 +112,204 @@ function signTex(text, color, sub = '') {
   return t;
 }
 
-function asphalt() {
-  const s = 512, c = canvas(s), g = c.getContext('2d');
-  g.fillStyle = '#080b11';
-  g.fillRect(0, 0, s, s);
-  for (let i = 0; i < 8000; i++) {
-    const v = Math.random();
-    g.fillStyle = `rgba(${110 + v * 90},${120 + v * 90},${150 + v * 80},${0.02 + Math.random() * 0.05})`;
-    g.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * 2, 1 + Math.random() * 2);
+// ---------------------------------------------------------------------------
+// Calzada: una losa de 19 x 40 m con marcas de pintura, parches, grietas,
+// alcantarillas y desagües. Se repite a lo largo y se desplaza con el avance.
+// ---------------------------------------------------------------------------
+function roadSurface() {
+  const W = 1024, H = 2048;
+  const c = canvas(W, H), g = c.getContext('2d');
+  const PX = W / 19, PY = H / 40;
+  const X = m => (m + 9.5) * PX;
+  const Y = m => m * PY;
+
+  g.fillStyle = '#191b1f';
+  g.fillRect(0, 0, W, H);
+
+  // manchas de betún y humedad
+  for (let i = 0; i < 90; i++) {
+    const x = Math.random() * W, y = Math.random() * H, r = 30 + Math.random() * 170;
+    const grd = g.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0, Math.random() < 0.5 ? 'rgba(76,80,88,0.15)' : 'rgba(3,4,6,0.22)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
   }
-  for (let i = 0; i < 30; i++) {
-    g.strokeStyle = `rgba(0,0,0,${0.2 + Math.random() * 0.4})`;
+  // árido
+  for (let i = 0; i < 42000; i++) {
+    const v = 45 + Math.random() * 92;
+    g.fillStyle = `rgba(${v},${v + 2},${v + 9},${0.05 + Math.random() * 0.15})`;
+    const s = Math.random() < 0.92 ? 1.6 : 3;
+    g.fillRect(Math.random() * W, Math.random() * H, s, s);
+  }
+  // huellas de neumático: dos bandas por carril
+  for (const lane of [-7.1, -2.6, 2.6, 7.1]) {
+    for (const off of [-0.78, 0.78]) {
+      const grd = g.createLinearGradient(X(lane + off - 0.36), 0, X(lane + off + 0.36), 0);
+      grd.addColorStop(0, 'rgba(0,0,0,0)');
+      grd.addColorStop(0.5, 'rgba(0,0,0,0.14)');
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grd;
+      g.fillRect(X(lane + off - 0.36), 0, 0.72 * PX, H);
+    }
+  }
+  // juntas de hormigón y grietas ramificadas
+  g.strokeStyle = 'rgba(6,7,10,0.5)';
+  for (let i = 0; i < 26; i++) {
     g.lineWidth = 1 + Math.random() * 2;
     g.beginPath();
-    let x = Math.random() * s, y = Math.random() * s;
+    let x = Math.random() * W, y = Math.random() * H;
     g.moveTo(x, y);
-    for (let k = 0; k < 4; k++) { x += (Math.random() - 0.5) * 80; y += (Math.random() - 0.5) * 80; g.lineTo(x, y); }
+    for (let k = 0; k < 6; k++) {
+      x += (Math.random() - 0.5) * 90; y += (Math.random() - 0.5) * 90;
+      g.lineTo(x, y);
+    }
     g.stroke();
+  }
+  // parches de obra
+  for (let i = 0; i < 3; i++) {
+    const pw = (1.6 + Math.random() * 2.4) * PX, ph = (2.4 + Math.random() * 4) * PY;
+    const px = Math.random() * (W - pw), py = Math.random() * (H - ph);
+    g.fillStyle = 'rgba(32,35,42,0.85)';
+    g.fillRect(px, py, pw, ph);
+    g.strokeStyle = 'rgba(6,7,9,0.85)';
+    g.lineWidth = 4;
+    g.strokeRect(px, py, pw, ph);
+  }
+
+  // ---------------------------------------------------------------- pintura
+  const white = 'rgba(232,238,246,0.9)';
+  // bordes continuos
+  for (const s of [-1, 1]) {
+    g.fillStyle = white;
+    g.fillRect(X(s * 8.85) - 0.07 * PX, 0, 0.14 * PX, H);
+  }
+  // eje doble continuo
+  for (const s of [-1, 1]) {
+    g.fillStyle = white;
+    g.fillRect(X(s * 0.16) - 0.05 * PX, 0, 0.10 * PX, H);
+  }
+  // discontinua de separación de carriles: 3 m pintados / 5 m libres
+  for (let y = 8.4; y < 40; y += 8) {
+    for (const lx of [-4.35, 4.35]) {
+      g.fillStyle = white;
+      g.fillRect(X(lx) - 0.06 * PX, Y(y), 0.12 * PX, 3 * PY);
+    }
+  }
+  // paso de cebra: barras largas cruzando la calzada
+  for (let y = 2.2; y < 6.2; y += 1.0) {
+    g.fillStyle = 'rgba(238,243,250,0.92)';
+    g.fillRect(X(-9.15), Y(y), 18.3 * PX, 0.52 * PY);
+  }
+  // pintura gastada: el árido vuelve a asomar
+  for (let i = 0; i < 9000; i++) {
+    const v = 40 + Math.random() * 55;
+    g.fillStyle = `rgba(${v},${v},${v + 4},${0.25 + Math.random() * 0.45})`;
+    g.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 3, 1 + Math.random() * 3);
+  }
+
+  // alcantarillas
+  const manhole = (mx, my) => {
+    const r = 0.44 * PX;
+    g.save();
+    g.translate(mx, my);
+    g.fillStyle = '#0b0d11'; g.beginPath(); g.arc(0, 0, r * 1.18, 0, 6.2832); g.fill();
+    g.fillStyle = '#25282e'; g.beginPath(); g.arc(0, 0, r, 0, 6.2832); g.fill();
+    g.strokeStyle = 'rgba(96,104,116,0.55)'; g.lineWidth = 2;
+    g.beginPath(); g.arc(0, 0, r * 0.84, 0, 6.2832); g.stroke();
+    g.strokeStyle = 'rgba(8,10,13,0.8)'; g.lineWidth = 2;
+    for (let i = -3; i <= 3; i++) {
+      g.beginPath(); g.moveTo(-r * 0.8, i * r * 0.25); g.lineTo(r * 0.8, i * r * 0.25); g.stroke();
+      g.beginPath(); g.moveTo(i * r * 0.25, -r * 0.8); g.lineTo(i * r * 0.25, r * 0.8); g.stroke();
+    }
+    g.strokeStyle = 'rgba(180,196,216,0.22)'; g.lineWidth = 3;
+    g.beginPath(); g.arc(0, 0, r * 1.18, Math.PI * 1.08, Math.PI * 1.56); g.stroke();
+    g.restore();
+  };
+  manhole(X(-2.6), Y(13.2));
+  manhole(X(6.9), Y(29.5));
+
+  // desagües junto al bordillo
+  const drain = (dx, dy) => {
+    const w = 0.42 * PX, h = 1.05 * PY;
+    g.fillStyle = '#0a0c10';
+    g.fillRect(dx - w / 2, dy - h / 2, w, h);
+    g.strokeStyle = 'rgba(126,136,150,0.4)'; g.lineWidth = 2;
+    g.strokeRect(dx - w / 2, dy - h / 2, w, h);
+    g.strokeStyle = 'rgba(5,6,8,0.95)'; g.lineWidth = 3;
+    for (let i = 1; i < 9; i++) {
+      const yy = dy - h / 2 + i * (h / 9);
+      g.beginPath(); g.moveTo(dx - w / 2 + 3, yy); g.lineTo(dx + w / 2 - 3, yy); g.stroke();
+    }
+  };
+  drain(X(-8.4), Y(17.5));
+  drain(X(8.4), Y(34.0));
+
+  const map = new THREE.CanvasTexture(c);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  // rugosidad: asfalto seco, pintura algo más lisa y manchas húmedas que brillan
+  const rc = canvas(256, 512), rg = rc.getContext('2d');
+  rg.fillStyle = '#e2e2e2';
+  rg.fillRect(0, 0, 256, 512);
+  for (let i = 0; i < 9000; i++) {
+    const v = 170 + Math.random() * 85;
+    rg.fillStyle = `rgba(${v},${v},${v},${0.25 + Math.random() * 0.5})`;
+    rg.fillRect(Math.random() * 256, Math.random() * 512, 2, 2);
+  }
+  for (let i = 0; i < 22; i++) {
+    const x = Math.random() * 256, y = Math.random() * 512, r = 14 + Math.random() * 60;
+    const grd = rg.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0, 'rgba(96,96,96,0.55)');
+    grd.addColorStop(1, 'rgba(96,96,96,0)');
+    rg.fillStyle = grd;
+    rg.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  const rough = new THREE.CanvasTexture(rc);
+  rough.wrapS = rough.wrapT = THREE.RepeatWrapping;
+
+  return { map, rough };
+}
+
+// ---------------------------------------------------------------------------
+// Acera / hormigón: losas de 60 cm con junta, manchas y grano
+// ---------------------------------------------------------------------------
+function pavement() {
+  const s = 512, c = canvas(s), g = c.getContext('2d');
+  g.fillStyle = '#2a2e35';
+  g.fillRect(0, 0, s, s);
+  const tile = s / 8; // 8 losas de 0.75 m sobre una textura de 6 m
+  for (let iy = 0; iy < 8; iy++) {
+    for (let ix = 0; ix < 8; ix++) {
+      const v = 34 + Math.random() * 16;
+      g.fillStyle = `rgba(${v + 6},${v + 9},${v + 14},0.85)`;
+      g.fillRect(ix * tile + 1, iy * tile + 1, tile - 2, tile - 2);
+    }
+  }
+  for (let i = 0; i < 22000; i++) {
+    const v = 55 + Math.random() * 80;
+    g.fillStyle = `rgba(${v},${v},${v + 6},${0.04 + Math.random() * 0.12})`;
+    g.fillRect(Math.random() * s, Math.random() * s, 1.5, 1.5);
+  }
+  g.strokeStyle = 'rgba(8,10,13,0.75)';
+  g.lineWidth = 3;
+  for (let i = 0; i <= 8; i++) {
+    g.beginPath(); g.moveTo(i * tile, 0); g.lineTo(i * tile, s); g.stroke();
+    g.beginPath(); g.moveTo(0, i * tile); g.lineTo(s, i * tile); g.stroke();
+  }
+  for (let i = 0; i < 18; i++) {
+    const x = Math.random() * s, y = Math.random() * s, r = 10 + Math.random() * 50;
+    const grd = g.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0, 'rgba(6,8,11,0.35)');
+    grd.addColorStop(1, 'rgba(6,8,11,0)');
+    g.fillStyle = grd;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(16, 16);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
 }
 
@@ -403,7 +579,7 @@ export class Arena {
     this.root.position.z = z;
     this.neonLights.forEach((l, i) => { l.position.z = this._lightZ[i] + z; });
     // 16 repeticiones sobre 160 m -> 10 m por baldosa
-    if (this.floorMat.map) this.floorMat.map.offset.y = (travel / 10) % 1;
+    if (this.floorMat.map) this.floorMat.map.offset.y = ((travel / 6) % 1 + 1) % 1;
     this._layoutBlocks(travel);
     const N = this.trackProps.length, SP = 9, CYCLE = N * SP;
     const from = z - 70;
@@ -416,27 +592,28 @@ export class Arena {
 
   // ------------------------------------------------------------------ suelo
   _ground() {
-    const tex = asphalt();
+    // fuera de la calzada no hay asfalto: losas de acera y solares de hormigón
+    const tex = pavement();
+    tex.repeat.set(70, 70);
     this.floorMat = new THREE.MeshStandardMaterial({
-      map: tex, color: 0x9aa7bb, roughness: 0.28, metalness: 0.55,
-      envMapIntensity: 1.2
+      map: tex, color: 0xc6cbd3, roughness: 0.9, metalness: 0.05,
+      envMapIntensity: 0.85
     });
-    tex.repeat.set(40, 40);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(420, 420), this.floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.root.add(floor);
 
-    // charcos de neón: planos aditivos que reflectan la paleta
+    // charcos de neón: planos aditivos que se reflejan en el suelo mojado
     this.puddles = [];
     const pgeo = new THREE.CircleGeometry(1, 24);
     for (let i = 0; i < 14; i++) {
       const m = new THREE.Mesh(pgeo, new THREE.MeshBasicMaterial({
-        color: 0x49e6ff, transparent: true, opacity: 0.13,
+        color: 0x49e6ff, transparent: true, opacity: 0.1,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
       const a = Math.random() * Math.PI * 2, r = 5 + Math.random() * 12;
-      m.position.set(Math.cos(a) * r, 0.012 + Math.random() * 0.01, Math.sin(a) * r);
+      m.position.set(Math.cos(a) * r, 0.014 + Math.random() * 0.008, Math.sin(a) * r);
       m.rotation.x = -Math.PI / 2;
       m.rotation.z = Math.random() * Math.PI;
       m.scale.set(1.4 + Math.random() * 3.2, 1.4 + Math.random() * 2.6, 1);
@@ -444,49 +621,52 @@ export class Arena {
       this.puddles.push(m);
     }
 
-    // rejillas / desagües
+    // rejillas / desagües sueltos sobre la acera
     for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2 + 0.3, r = 6.5 + Math.random() * 8;
-      const g = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.55),
-        new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.6, metalness: 0.8 }));
-      g.position.set(Math.cos(a) * r, 0.02, Math.sin(a) * r);
+      const a = (i / 8) * Math.PI * 2 + 0.3, r = 10.2 + Math.random() * 4;
+      const g = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.03, 0.55),
+        new THREE.MeshStandardMaterial({ color: 0x181d24, roughness: 0.62, metalness: 0.75 }));
+      g.position.set(Math.cos(a) * r, 0.012, Math.sin(a) * r);
       g.rotation.y = a;
       this.root.add(g);
     }
   }
 
   _road() {
-    // calzada: eje discontinuo + bordes de neón. Todo hijo del root (sigue al
-    // jugador) pero el grupo del eje se desplaza con el avance para dar velocidad.
+    // calzada real: asfalto con marcas, parches y alcantarillas. La textura se
+    // desplaza con el avance (offset.y) y el neón queda en el bordillo.
+    const tex = roadSurface();
+    this.roadMat = new THREE.MeshStandardMaterial({
+      map: tex.map, roughnessMap: tex.rough, color: 0xbac2ce,
+      roughness: 0.62, metalness: 0.24, envMapIntensity: 1.25
+    });
+    tex.map.repeat.set(1, 10.5);
+    tex.rough.repeat.set(1, 10.5);
+    tex.map.anisotropy = 8;
+    tex.rough.anisotropy = 4;
+
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(19, 420), this.roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(0, 0.006, -60);
+    road.receiveShadow = true;
+    this.root.add(road);
+    this.road = road;
+
+    // grupo vacío: conserva la API de scroll/pulso que usa el resto del juego
     this.dashGroup = new THREE.Group();
-    const dashMat = new THREE.MeshBasicMaterial({
-      color: 0x49e6ff, transparent: true, opacity: 0.3,
+    this.root.add(this.dashGroup);
+    this.rim = this.dashGroup;
+
+    // filo de neón en el bordillo: una línea baja, no una barra flotante
+    this.rimGlow = new THREE.MeshBasicMaterial({
+      color: 0x49e6ff, transparent: true, opacity: 0.5,
       blending: THREE.AdditiveBlending, depthWrite: false
     });
-    const dashGeo = new THREE.PlaneGeometry(0.16, 2.8);
-    for (let i = 0; i < 30; i++) {
-      const d = new THREE.Mesh(dashGeo, dashMat);
-      d.rotation.x = -Math.PI / 2;
-      d.position.set(0, 0.022, 24 - i * 9);
-      this.dashGroup.add(d);
+    for (const s of [-1, 1]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.016, 320), this.rimGlow);
+      strip.position.set(s * 9.74, 0.156, -110);
+      this.root.add(strip);
     }
-    this.root.add(this.dashGroup);
-
-    for (const sx of [-1, 1]) {
-      const edge = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.1, 260),
-        new THREE.MeshBasicMaterial({
-          color: 0xff4fd8, transparent: true, opacity: 0.4,
-          blending: THREE.AdditiveBlending, depthWrite: false
-        })
-      );
-      edge.rotation.x = -Math.PI / 2;
-      edge.position.set(sx * 9.4, 0.023, -100);
-      this.root.add(edge);
-    }
-    // el temblor del anillo antiguo pasa a ser el pulso del asfalto
-    this.rim = this.dashGroup;
-    this.rimGlow = dashMat;
   }
 
   // ------------------------------------------------------------------- calle
@@ -881,6 +1061,11 @@ export class Arena {
       b.g.position.z = from + ((b.slot * this.blockSP + t) % CYCLE);
     }
     if (this.dashGroup) this.dashGroup.position.z = -(((travel % 9) + 9) % 9);
+    if (this.roadMat && this.roadMat.map) {
+      const o = ((travel / 40) % 1 + 1) % 1;
+      this.roadMat.map.offset.y = o;
+      this.roadMat.roughnessMap.offset.y = o;
+    }
     if (this.bridgeGroup) {
       const bs = 44 * 3;
       this.bridgeGroup.position.z = -(((travel % bs) + bs) % bs);
@@ -1338,15 +1523,24 @@ export class Arena {
   }
 
   _sidewalks() {
-    const walkMat = new THREE.MeshStandardMaterial({ color: 0x1a212c, roughness: 0.7, metalness: 0.35 });
-    const curbMat = new THREE.MeshBasicMaterial({ color: 0x49e6ff, toneMapped: false, transparent: true, opacity: 0.75 });
+    // acera de losas con bordillo de hormigón y un filo de luz en la arista
+    const tex = pavement();
+    tex.repeat.set(0.47, 53);
+    const walkMat = new THREE.MeshStandardMaterial({
+      map: tex, color: 0xbfc4cc, roughness: 0.86, metalness: 0.06,
+      envMapIntensity: 0.9
+    });
+    const curbMat = new THREE.MeshStandardMaterial({
+      color: 0x585e68, roughness: 0.72, metalness: 0.12, envMapIntensity: 0.9
+    });
     for (const s of [-1, 1]) {
-      const w = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.26, 320), walkMat);
-      w.position.set(s * 10.9, 0.13, -110);
+      const w = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.16, 320), walkMat);
+      w.position.set(s * 11.0, 0.08, -110);
       w.receiveShadow = true;
       this.root.add(w);
-      const c = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 320), curbMat);
-      c.position.set(s * 9.5, 0.27, -110);
+      const c = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.17, 320), curbMat);
+      c.position.set(s * 9.6, 0.085, -110);
+      c.receiveShadow = true;
       this.root.add(c);
     }
   }
@@ -1426,27 +1620,18 @@ export class Arena {
 
   // líneas laterales continuas + pasos de cebra que fluyen con el avance
   _roadmarks() {
-    const lineMat = new THREE.MeshBasicMaterial({
-      color: 0xdfe9ff, transparent: true, opacity: 0.22,
-      blending: THREE.AdditiveBlending, depthWrite: false
+    // Las líneas, el paso de cebra y las alcantarillas ya van pintados en la
+    // textura de la calzada: aquí solo quedan los imbornales del bordillo.
+    const grateMat = new THREE.MeshStandardMaterial({
+      color: 0x141920, roughness: 0.55, metalness: 0.8, envMapIntensity: 1.1
     });
     for (const s of [-1, 1]) {
-      const l = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 340), lineMat);
-      l.rotation.x = -Math.PI / 2;
-      l.position.set(s * 8.7, 0.015, -110);
-      this.root.add(l);
+      for (let i = 0; i < 18; i++) {
+        const grate = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.03, 0.9), grateMat);
+        grate.position.set(s * 8.4, 0.011, 18 - i * 24);
+        this.root.add(grate);
+      }
     }
-    const zt = zebraTex();
-    this.crossGroup = new THREE.Group();
-    this.crossSP = 46;
-    for (let i = 0; i < 4; i++) {
-      const z = new THREE.Mesh(new THREE.PlaneGeometry(17.4, 3.4),
-        new THREE.MeshBasicMaterial({ map: zt, transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false }));
-      z.rotation.x = -Math.PI / 2;
-      z.position.set(0, 0.018, -i * this.crossSP);
-      this.crossGroup.add(z);
-    }
-    this.root.add(this.crossGroup);
   }
 
   // farolas de pie: poste + cabezal + charco de luz en el asfalto

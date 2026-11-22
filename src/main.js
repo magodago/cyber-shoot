@@ -3,14 +3,14 @@
 // aéreas y terrestres; jefes cada 3 niveles; tienda entre niveles que se dispara.
 
 import * as THREE from 'three';
-import { Arena, PALETTES } from './arena.js?v=14';
-import { FX } from './fx.js?v=14';
-import { GameAudio } from './audio.js?v=14';
-import { WeaponSystem } from './weapon.js?v=14';
-import { makeEnemy, BoltField } from './enemies.js?v=14';
-import { Music } from './music.js?v=14';
-import { createCover } from './cover.js?v=14';
-import { createStory } from './story.js?v=14';
+import { Arena, PALETTES } from './arena.js?v=15';
+import { FX } from './fx.js?v=15';
+import { GameAudio } from './audio.js?v=15';
+import { WeaponSystem } from './weapon.js?v=15';
+import { makeEnemy, BoltField } from './enemies.js?v=15';
+import { Music } from './music.js?v=15';
+import { createCover } from './cover.js?v=15';
+import { createStory } from './story.js?v=15';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -38,6 +38,10 @@ const S = {
   queue: [],
   spawnT: 0,
   boss: null,
+  // El titán no se queda plantado: entra desde el fondo de la calle y la
+  // distancia al jugador baja segundo a segundo. Si llega, se acabó.
+  bossDist: 0,
+  bossAddT: 0,
   shots: 0,
   hits: 0,
   up: { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0, med: 0 }
@@ -143,9 +147,16 @@ function addKill(e) {
   S.credits += Math.round(e.scoreValue / 5);
   if (e.isBoss) {
     S.boss = null;
+    S.bossDist = 0;
     music.setIntensity(1);
     if (audio.explode) audio.explode();
     shake(0.9);
+    // La horda que lo escoltaba se viene abajo con él: el nivel puede cerrarse
+    // y el jugador no se queda limpiando drones sueltos sin recompensa.
+    for (const o of enemies) {
+      if (o && !o.dead && o !== e) o.silentKill();
+    }
+    panel.flashMsg = 'TITÁN ABATIDO';
   } else if (audio.death) audio.death();
   fx.ring(e.group.position, e.color, 0.9, 0.45);
 }
@@ -348,6 +359,7 @@ class Panel {
       else if (t.kind === 'card') buy(t.index);
     } else if (this.mode === 'dead' || this.mode === 'win') {
       if (t.kind === 'next') restartRun();
+      else if (t.kind === 'home') backToHome();
     }
     this.draw();
   }
@@ -495,16 +507,28 @@ class Panel {
     c.font = '500 26px Inter, system-ui, sans-serif';
     c.fillText(S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión · ' + S.credits + ' créditos sin gastar', 512, 340);
 
-    roundRect(c, 246, 380, 532, 110, 18);
+    roundRect(c, 150, 380, 420, 110, 18);
     c.fillStyle = 'rgba(92,255,157,0.16)';
     c.fill();
     c.strokeStyle = 'rgba(92,255,157,0.9)';
     c.lineWidth = 3;
     c.stroke();
     c.fillStyle = '#ffffff';
-    c.font = '800 38px Inter, system-ui, sans-serif';
-    c.fillText('VOLVER A JUGAR', 512, 450);
-    this.rects.push({ kind: 'next', x: 246, y: 380, w: 532, h: 110 });
+    c.font = '800 32px Inter, system-ui, sans-serif';
+    c.fillText('VOLVER A JUGAR', 360, 448);
+    this.rects.push({ kind: 'next', x: 150, y: 380, w: 420, h: 110 });
+
+    roundRect(c, 600, 380, 274, 110, 18);
+    c.fillStyle = 'rgba(73,230,255,0.10)';
+    c.fill();
+    c.strokeStyle = 'rgba(73,230,255,0.75)';
+    c.lineWidth = 3;
+    c.stroke();
+    c.fillStyle = '#ffffff';
+    c.font = '800 30px Inter, system-ui, sans-serif';
+    c.fillText('INICIO', 737, 448);
+    this.rects.push({ kind: 'home', x: 600, y: 380, w: 274, h: 110 });
+
     c.fillStyle = 'rgba(255,255,255,0.4)';
     c.font = '500 18px Inter, system-ui, sans-serif';
     c.fillText('dispara al botón', 512, 528);
@@ -522,16 +546,28 @@ class Panel {
     c.font = '500 26px Inter, system-ui, sans-serif';
     c.fillText('nivel ' + S.level + ' · ' + S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión', 512, 280);
 
-    roundRect(c, 246, 330, 532, 120, 18);
+    roundRect(c, 150, 330, 420, 120, 18);
     c.fillStyle = 'rgba(73,230,255,0.16)';
     c.fill();
     c.strokeStyle = 'rgba(73,230,255,0.9)';
     c.lineWidth = 3;
     c.stroke();
     c.fillStyle = '#ffffff';
-    c.font = '800 40px Inter, system-ui, sans-serif';
-    c.fillText('REINICIAR', 512, 406);
-    this.rects.push({ kind: 'next', x: 246, y: 330, w: 532, h: 120 });
+    c.font = '800 34px Inter, system-ui, sans-serif';
+    c.fillText('REINICIAR', 360, 404);
+    this.rects.push({ kind: 'next', x: 150, y: 330, w: 420, h: 120 });
+
+    roundRect(c, 600, 330, 274, 120, 18);
+    c.fillStyle = 'rgba(255,79,216,0.12)';
+    c.fill();
+    c.strokeStyle = 'rgba(255,79,216,0.8)';
+    c.lineWidth = 3;
+    c.stroke();
+    c.fillStyle = '#ffffff';
+    c.font = '800 32px Inter, system-ui, sans-serif';
+    c.fillText('INICIO', 737, 404);
+    this.rects.push({ kind: 'home', x: 600, y: 330, w: 274, h: 120 });
+
     c.fillStyle = 'rgba(255,255,255,0.4)';
     c.font = '500 18px Inter, system-ui, sans-serif';
     c.fillText('dispara al botón', 512, 486);
@@ -676,6 +712,8 @@ function startLevel(level) {
   S.waveT = 1.6;
   S.queue = [];
   S.boss = null;
+  S.bossDist = 0;
+  S.bossAddT = 2.5;
   S.combo = 1;
   S.comboT = 0;
   S.mode = 'playing';
@@ -745,15 +783,15 @@ function spawnOne(kind) {
   // así las oleadas grandes no se quedan a medias.
   let node = null;
   if (kind === 'boss') {
-    // El titán se planta en mitad de la calle, de frente y a media distancia:
-    // lo bastante lejos para que se vea entero (14 m de alto) y lo bastante
-    // cerca para que imponga. Nunca se descarta por falta de hueco.
+    // El titán entra desde el fondo de la calle: aparece pequeño, se le ve
+    // crecer y viene hacia ti. Tú decides si llegas a matarlo antes.
     node = arena.pickNodeAhead(Math.random, 'ground', taken, 4.0, 20, 27, PLAYER);
     if (!node) node = { pos: new THREE.Vector3(0, 0, 0), kind: 'ground' };
     // la Arena guarda su propia z y va desfasada: se ancla a la del jugador
     node.pos.x = Math.max(-3.5, Math.min(3.5, node.pos.x * 0.25));
     node.pos.y = 0;
-    node.pos.z = PLAYER.z - 17.5;
+    S.bossDist = BOSS_START;
+    node.pos.z = PLAYER.z - S.bossDist;
   }
   if (!node) {
     for (const gap of [3.2, 2.4, 1.6]) {
@@ -765,8 +803,8 @@ function spawnOne(kind) {
     node = arena.pickNodeAhead(Math.random, 'ground', taken, 2.6, 10, 26, PLAYER);
   }
   if (!node) return false;
-  // un titán de 14 m no puede caer en dos segundos: ~30 s de fuego sostenido
-  const bossHp = kind === 'boss' ? Math.round(4800 + S.level * 400) : undefined;
+  // el titán aguanta una campaña entera de plomo: ~30 s de fuego perfecto
+  const bossHp = kind === 'boss' ? Math.round(3800 + S.level * 320) : undefined;
   const e = makeEnemy(world, node, kind, bossHp);
   e.isBoss = kind === 'boss';
   enemies.push(e);
@@ -795,8 +833,38 @@ function startWave(i) {
   updateHud(true);
 }
 
+// El titán no se queda plantado: entra desde el fondo y avanza solo. La
+// distancia baja con el reloj y él se recoloca frente al jugador, así que la
+// única salida es matarlo antes de que te ponga la mano encima.
+const BOSS_START = 26, BOSS_NEAR = 3.4;
+
+function updateBossApproach(dt) {
+  const b = S.boss;
+  if (!b || b.dead || S.mode !== 'playing') return;
+  if (b.state === 'spawn') return;            // aún saliendo de la calzada
+  // Cada fase que pierde lo hace enfadar: aprieta el paso. A 0,24 u/s tarda
+  // ~90 s en cruzar la calle: tiempo de sobra para vaciar cargadores, pero
+  // con la horda encima y sin cobertura no es un paseo.
+  const speed = 0.24 + Math.max(0, (b.phase || 1) - 1) * 0.10;
+  S.bossDist = Math.max(BOSS_NEAR, S.bossDist - dt * speed);
+  b.node.pos.z = PLAYER.z - S.bossDist;
+  if (S.bossDist <= BOSS_NEAR) gameOver('EL TITÁN TE ALCANZÓ');
+}
+
 function updateWaves(dt) {
   if (S.mode !== 'playing') return;
+
+  updateBossApproach(dt);
+
+  // Mientras el titán viva, la calle escupe refuerzos: no puedes dedicarte solo
+  // a él. Con tope de vivos para que la pelea siga siendo ganable.
+  if (S.boss && !S.boss.dead) {
+    S.bossAddT -= dt;
+    if (S.bossAddT <= 0) {
+      S.bossAddT = rand(3.6, 6.2);
+      if (aliveCount() < 8) spawnOne(pickKind(S.level));
+    }
+  }
 
   if (S.waveState === 'idle') {
     S.waveT -= dt;
@@ -931,11 +999,14 @@ function victory() {
     'MISIÓN CUMPLIDA',
     S.score.toLocaleString('es-ES') + ' puntos · ' + S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión',
     'VOLVER A JUGAR',
-    () => startCampaign()
+    () => startCampaign(),
+    '',
+    'VOLVER AL INICIO',
+    () => backToHome()
   );
 }
 
-function gameOver() {
+function gameOver(why) {
   if (S.mode === 'dead') return;
   S.mode = 'dead';
   bolts.clear();
@@ -945,7 +1016,15 @@ function gameOver() {
   panel.flashMsg = '';
   panel.mode = 'dead';
   panel.show('dead');
-  showOverlay('SISTEMA CAÍDO', 'Puntuación ' + S.score.toLocaleString('es-ES'), 'REINICIAR', () => restartRun());
+  showOverlay(
+    'SISTEMA CAÍDO',
+    (why ? why + ' · ' : '') + 'Puntuación ' + S.score.toLocaleString('es-ES'),
+    'REINICIAR',
+    () => restartRun(),
+    '',
+    'VOLVER AL INICIO',
+    () => backToHome()
+  );
 }
 
 function resetRun() {
@@ -961,6 +1040,25 @@ function restartRun() {
   resetRun();
   cover.show(false);
   startLevel(1);
+}
+
+// Volver a la portada: se vacía la calle, se apaga el arma y vuelve el título
+// 3D con su único botón de jugar. Sirve desde el overlay (escritorio) y desde
+// el botón INICIO del panel del visor.
+function backToHome() {
+  for (const e of enemies) { if (e) { e.dead = true; if (e.group) e.group.visible = false; } }
+  enemies.length = 0;
+  bolts.clear();
+  panel.hide();
+  hideOverlay();
+  resetRun();
+  // la calle vuelve al principio: sin esto la portada se veía desde el fondo
+  travel = 0; strafe = 0; strafeV = 0;
+  weapon.enabled = false;
+  S.mode = 'cover';
+  cover.show(true);
+  showCover();
+  if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
 }
 
 /* ------------------------------------------------------------------ bucle */
@@ -1304,9 +1402,11 @@ function showCover() {
   b.onclick = onPlay;
   document.getElementById('hud').style.opacity = '0';
   b.style.display = 'block';
+  const b2 = $('#ov-btn2');
+  if (b2) b2.style.display = 'none';
 }
 
-function showOverlay(title, sub, btn, fn, extra) {
+function showOverlay(title, sub, btn, fn, extra, altLabel, altFn) {
   const ov = $('#overlay');
   if (!ov) return;
   ov.style.display = 'flex';
@@ -1318,6 +1418,13 @@ function showOverlay(title, sub, btn, fn, extra) {
   b.textContent = btn;
   b.onclick = fn;
   b.style.display = btn ? 'block' : 'none';
+  // segundo botón (volver al inicio), oculto si la pantalla no lo pide
+  const b2 = $('#ov-btn2');
+  if (b2) {
+    b2.textContent = altLabel || '';
+    b2.onclick = altFn || null;
+    b2.style.display = altLabel ? 'block' : 'none';
+  }
 }
 
 function hideOverlay() {

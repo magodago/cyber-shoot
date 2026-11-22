@@ -20,99 +20,241 @@ function mat(color, { metal = 0.85, rough = 0.35, emis = 0x000000, ei = 0 } = {}
   });
 }
 
-/** Pistola. Empuñadura en el origen, cañón hacia -Z. */
-function buildPistol(accent) {
+// textura de la empuñadura: picado antideslizante, grano de polímero y desgaste
+function gripTex() {
+  const w = 128, h = 256, c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.fillStyle = '#191b1f'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2600; i++) {
+    const v = 30 + Math.random() * 40;
+    g.fillStyle = `rgba(${v},${v + 3},${v + 7},${0.22 + Math.random() * 0.3})`;
+    g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+  }
+  // picado: puntos hundidos con un filo claro arriba a la izquierda
+  for (let y = 8; y < h - 8; y += 7) {
+    for (let x = 8 + (((y / 7) | 0) % 2) * 3.5; x < w - 8; x += 7) {
+      g.fillStyle = 'rgba(6,7,9,0.6)';
+      g.beginPath(); g.arc(x, y, 2.2, 0, 6.2832); g.fill();
+      g.fillStyle = 'rgba(126,134,148,0.18)';
+      g.beginPath(); g.arc(x - 0.7, y - 0.8, 1.1, 0, 6.2832); g.fill();
+    }
+  }
+  const grd = g.createLinearGradient(0, 0, w, 0);
+  grd.addColorStop(0, 'rgba(150,160,175,0.12)');
+  grd.addColorStop(0.14, 'rgba(0,0,0,0)');
+  grd.addColorStop(0.86, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(150,160,175,0.12)');
+  g.fillStyle = grd; g.fillRect(0, 0, w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/** Perfil lateral extruido en X: da cantos biselados, no bloques. */
+function plate(pts, w, bevel = 0.0016, hole = null) {
+  const sh = new THREE.Shape();
+  pts.forEach((p, i) => (i ? sh.lineTo(p[0], p[1]) : sh.moveTo(p[0], p[1])));
+  sh.closePath();
+  if (hole) {
+    const h = new THREE.Path();
+    hole.forEach((p, i) => (i ? h.lineTo(p[0], p[1]) : h.moveTo(p[0], p[1])));
+    h.closePath();
+    sh.holes.push(h);
+  }
+  const geo = new THREE.ExtrudeGeometry(sh, {
+    depth: w, steps: 1, bevelEnabled: true,
+    bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 5
+  });
+  geo.rotateY(-Math.PI / 2);
+  geo.translate(w / 2, 0, 0);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Pistola de servicio 1:1 (~19 cm). Empuñadura en el origen, cañón hacia -Z. */
+function buildPistol(accent, side = 1) {
   const g = new THREE.Group();
-  // materiales de "viewmodel": no hay luz cerca de la cámara, así que el arma
-  // se ilumina a sí misma con emissive alto o se ve negra contra la noche
-  const bodyMat = mat(GUN_COL.body, { metal: 0.55, rough: 0.45, emis: 0x1d3f5c, ei: 0.85 });
-  const metalMat = mat(GUN_COL.metal, { metal: 0.7, rough: 0.35, emis: 0x17324a, ei: 0.7 });
-  const neon = new THREE.MeshBasicMaterial({ color: accent, toneMapped: false });
-  const neonDim = new THREE.MeshBasicMaterial({ color: accent, toneMapped: false,
-    transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false });
+  const body = new THREE.Group();
+  g.add(body);
 
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.19, 0.1), bodyMat);
-  grip.position.set(0, -0.075, 0.055);
-  grip.rotation.x = -0.22;
-  g.add(grip);
+  const steel  = mat(0x3b424c, { metal: 0.72, rough: 0.34 });
+  const steelL = mat(0x6a7380, { metal: 0.80, rough: 0.22 });
+  const poly   = mat(0x1e2228, { metal: 0.04, rough: 0.72 });
+  const poly2  = mat(0x2a2f37, { metal: 0.04, rough: 0.60 });
+  const dark   = mat(0x06070a, { metal: 0.25, rough: 0.52 });
+  const neon   = mat(accent, { metal: 0.3, rough: 0.35, emis: accent, ei: 1.5 });
 
-  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.11, 0.34), metalMat);
-  slide.position.set(0, 0.035, -0.09);
-  g.add(slide);
+  // --- corredera: perfil con chaflán delantero y lomo rebajado ------------
+  const slide = new THREE.Mesh(plate([
+    [0.092, -0.0046], [0.092, 0.0212], [-0.078, 0.0212],
+    [-0.094, 0.0178], [-0.100, 0.0102], [-0.100, -0.0046]
+  ], 0.0264, 0.0026), steel);
+  body.add(slide);
 
-  const shroud = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.055, 0.22), bodyMat);
-  shroud.position.set(0, 0.012, -0.16);
-  g.add(shroud);
+  // ranuras de agarre traseras, inclinadas (no rectángulos planos)
+  for (let i = 0; i < 9; i++) {
+    const z = 0.0530 + i * 0.0042;
+    for (const sx of [-1, 1]) {
+      const sl = new THREE.Mesh(new THREE.BoxGeometry(0.0018, 0.0215, 0.0022), steelL);
+      sl.position.set(sx * 0.0134, 0.0084, z);
+      sl.rotation.x = 0.24;
+      body.add(sl);
+    }
+  }
+  // ventana de expulsión + extractor
+  const port = new THREE.Mesh(plate([
+    [-0.020, 0.0035], [0.026, 0.0035], [0.026, 0.0165], [-0.020, 0.0165]
+  ], 0.0008, 0.0002), dark);
+  port.position.x = 0.0133;
+  body.add(port);
+  const extractor = new THREE.Mesh(new THREE.BoxGeometry(0.0012, 0.0032, 0.030), steelL);
+  extractor.position.set(0.0133, 0.0172, 0.006);
+  body.add(extractor);
 
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 0.2, 12), metalMat);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.02, -0.3);
-  g.add(barrel);
+  // --- alza y punto de mira ---------------------------------------------
+  for (const sx of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.0056, 0.0105, 0.0062), steel);
+    post.position.set(sx * 0.0072, 0.0262, 0.0855);
+    body.add(post);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0011, 8, 6), neon);
+    dot.position.set(sx * 0.0072, 0.0228, 0.0822);
+    body.add(dot);
+  }
+  const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.0032, 0.0075, 0.005), steel);
+  frontSight.position.set(0, 0.0248, -0.0855);
+  body.add(frontSight);
+  const fsDot = new THREE.Mesh(new THREE.SphereGeometry(0.0013, 8, 6), neon);
+  fsDot.position.set(0, 0.0225, -0.0828);
+  body.add(fsDot);
+
+  // --- armazón: polvo, rail y mandos ------------------------------------
+  const frame = new THREE.Mesh(plate([
+    [0.092, -0.0042], [-0.070, -0.0042], [-0.074, -0.0092],
+    [-0.068, -0.0205], [0.030, -0.0205], [0.092, -0.0125]
+  ], 0.0268, 0.0018), poly2);
+  body.add(frame);
 
   for (let i = 0; i < 3; i++) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.011, 8, 18), neon);
-    ring.position.set(0, 0.02, -0.24 - i * 0.055);
-    g.add(ring);
+    const rib = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0026, 0.0034), dark);
+    rib.position.set(0, -0.0214, -0.050 - i * 0.0072);
+    body.add(rib);
+  }
+  // retén de corredera (izq.) y liberación de cargador
+  const stop = new THREE.Mesh(plate([
+    [0.006, -0.0125], [0.040, -0.0125], [0.042, -0.0182], [0.006, -0.0196]
+  ], 0.0018, 0.0006), steelL);
+  stop.position.x = -0.0138;
+  body.add(stop);
+  for (const sx of [-1, 1]) {
+    const rel = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.0026, 14), steelL);
+    rel.rotation.z = Math.PI / 2;
+    rel.position.set(sx * 0.0138, -0.0165, 0.0105);
+    body.add(rel);
   }
 
-  // cargador de energía visible en el costado (da volumen y color al arma)
-  for (const s of [-1, 1]) {
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.052, 0.19), neonDim);
-    plate.position.set(s * 0.043, 0.035, -0.1);
-    g.add(plate);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.022, 0.26), neon);
-    strip.position.set(s * 0.053, 0.06, -0.1);
-    g.add(strip);
-  }
+  // --- guardamonte real (aro, no alambre) -------------------------------
+  const guard = new THREE.Mesh(plate([
+    [-0.006, -0.0192], [-0.046, -0.0192], [-0.050, -0.0300],
+    [-0.043, -0.0455], [-0.020, -0.0512], [0.006, -0.0505],
+    [0.014, -0.0380], [0.013, -0.0192]
+  ], 0.0245, 0.0020, [
+    [-0.004, -0.0235], [-0.040, -0.0235], [-0.043, -0.0305],
+    [-0.037, -0.0410], [-0.019, -0.0455], [0.002, -0.0450],
+    [0.0085, -0.0350], [0.008, -0.0235]
+  ]), poly2);
+  body.add(guard);
 
-  // celda del cargador brillando a través de la empuñadura
-  const cell = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.055), neon);
-  cell.position.set(0, -0.095, 0.062);
-  cell.rotation.x = -0.22;
-  g.add(cell);
+  const trigger = new THREE.Mesh(plate([
+    [0.0055, -0.0255], [0.0072, -0.0315], [0.0062, -0.0395],
+    [0.0030, -0.0448], [0.0002, -0.0430], [0.0006, -0.0345], [0.0028, -0.0265]
+  ], 0.0062, 0.0009), steel);
+  body.add(trigger);
 
-  const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.012, 0.3), neon);
-  topRail.position.set(0, 0.093, -0.09);
-  g.add(topRail);
+  // --- empuñadura con curva de palma y ranuras --------------------------
+  const gt = gripTex();
+  gt.wrapS = gt.wrapT = THREE.RepeatWrapping;
+  gt.repeat.set(9, 9);
+  const gripMat = new THREE.MeshStandardMaterial({
+    map: gt, color: 0xcfd6e0, metalness: 0.04, roughness: 0.80,
+    envMapIntensity: 0.9
+  });
+  const grip = new THREE.Mesh(plate([
+    [-0.0062, -0.0175], [-0.0022, -0.0320], [-0.0028, -0.0430],
+    [0.0010, -0.0480], [0.0002, -0.0540], [0.0040, -0.0592],
+    [0.0032, -0.0650], [0.0072, -0.0702], [0.0066, -0.0760],
+    [0.0108, -0.0815], [0.0128, -0.0930], [0.0180, -0.1060],
+    [0.0205, -0.1175], [0.0620, -0.1195], [0.0700, -0.1080],
+    [0.0748, -0.0900], [0.0798, -0.0700], [0.0846, -0.0480],
+    [0.0888, -0.0300], [0.0915, -0.0155], [0.0905, -0.0080]
+  ], 0.0286, 0.0030), gripMat);
+  body.add(grip);
 
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.014, 0.012), neon);
-  sight.position.set(0, 0.098, -0.19);
-  g.add(sight);
-  const sightBack = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.012, 0.012), neon);
-  sightBack.position.set(0, 0.098, 0.01);
-  g.add(sightBack);
+  // cargador: base con labio y franja de acento
+  const base = new THREE.Mesh(plate([
+    [0.0195, -0.1170], [0.0225, -0.1205], [0.0640, -0.1225],
+    [0.0685, -0.1145], [0.0645, -0.1120], [0.0225, -0.1105]
+  ], 0.0330, 0.0018), poly);
+  body.add(base);
+  const mark = new THREE.Mesh(new THREE.BoxGeometry(0.0332, 0.0016, 0.0030), neon);
+  mark.position.set(0, -0.1195, 0.0605);
+  mark.rotation.x = 0.16;
+  body.add(mark);
 
-  const ammoRing = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.0055, 6, 20, Math.PI * 1.6),
-    new THREE.MeshBasicMaterial({ color: 0x5cff9d, toneMapped: false }));
-  ammoRing.position.set(0, -0.088, 0.02);
-  ammoRing.rotation.set(-0.5, 0, -Math.PI * 0.3);
-  g.add(ammoRing);
-
-  const hammer = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.05), bodyMat);
-  hammer.position.set(0, 0.06, 0.055);
-  g.add(hammer);
+  // --- cañón, guía y boca ------------------------------------------------
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.0082, 0.0082, 0.017, 20), steelL);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 0.0042, -0.0975);
+  body.add(barrel);
+  const crown = new THREE.Mesh(new THREE.TorusGeometry(0.0082, 0.0009, 8, 20), steel);
+  crown.position.set(0, 0.0042, -0.1058);
+  body.add(crown);
+  const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.0050, 0.0050, 0.020, 20, 1, true), dark);
+  bore.rotation.x = Math.PI / 2;
+  bore.position.set(0, 0.0042, -0.0972);
+  const boreFace = new THREE.Mesh(new THREE.CircleGeometry(0.0050, 20), dark);
+  boreFace.position.set(0, 0.0042, -0.0885);
+  body.add(boreFace);
+  body.add(bore);
+  const guide = new THREE.Mesh(new THREE.CylinderGeometry(0.0030, 0.0030, 0.026, 12), dark);
+  guide.rotation.x = Math.PI / 2;
+  guide.position.set(0, -0.0126, -0.0790);
+  body.add(guide);
 
   const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0.02, -0.4);
-  g.add(muzzle);
+  muzzle.position.set(0, 0.0042, -0.108);
+  body.add(muzzle);
 
   const flash = new THREE.Sprite(new THREE.SpriteMaterial({
     map: TEX ? TEX.glow : null, color: accent, transparent: true, opacity: 0,
     blending: THREE.AdditiveBlending, depthWrite: false
   }));
   flash.position.copy(muzzle.position);
-  flash.scale.setScalar(0.6);
-  g.add(flash);
+  flash.scale.setScalar(0.30);
+  body.add(flash);
 
-  // segundo destello alargado: da la sensación de fogonazo, no de bombilla
   const flashCore = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: TEX ? TEX.glow : null, color: 0xffffff, transparent: true, opacity: 0,
+    map: TEX ? TEX.glow : null, color: 0xfff4de, transparent: true, opacity: 0,
     blending: THREE.AdditiveBlending, depthWrite: false
   }));
   flashCore.position.copy(muzzle.position);
-  flashCore.position.z -= 0.1;
-  flashCore.scale.set(0.18, 0.18, 1);
-  g.add(flashCore);
+  flashCore.position.z -= 0.05;
+  flashCore.scale.set(0.13, 0.30, 1);
+  body.add(flashCore);
+
+  // indicador de munición: arco fino pegado a la base del cargador
+  const ammoRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.0155, 0.0013, 6, 20, Math.PI * 1.7),
+    new THREE.MeshStandardMaterial({ color: accent, emissive: new THREE.Color(accent), emissiveIntensity: 0.9, metalness: 0.2, roughness: 0.4 })
+  );
+  ammoRing.position.set(0, -0.1125, 0.0415);
+  ammoRing.rotation.set(-0.24 + Math.PI / 2, 0, -Math.PI * 0.35);
+  body.add(ammoRing);
+
+  // la empuñadura (centro de la mano) queda en el origen del grupo
+  body.position.set(0, 0.062, 0.004);
+  g.scale.setScalar(1.15);
 
   return { group: g, muzzle, flash, flashCore, ammoRing };
 }
@@ -135,7 +277,7 @@ export class WeaponSystem {
     this.hands = {};
     for (const hand of ['L', 'R']) {
       const accent = hand === 'R' ? GUN_COL.neonA : GUN_COL.neonB;
-      const built = buildPistol(accent);
+      const built = buildPistol(accent, hand === 'R' ? 1 : -1);
       scene.add(built.group);
       this.hands[hand] = {
         hand,
@@ -616,3 +758,5 @@ export class WeaponSystem {
     return this.hands.L.reloading && this.hands.R.reloading;
   }
 }
+
+export { buildPistol };

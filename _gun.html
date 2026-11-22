@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Probe arma</title>
+<style>html,body{margin:0;height:100%;background:#0b0d12}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+window.addEventListener('error', e => { const d = document.createElement('pre'); d.style.cssText='color:#f66;font:13px monospace;position:fixed;inset:20px'; d.textContent='ERR '+e.message+' '+(e.filename||'')+':'+e.lineno; document.body.appendChild(d); });
+import { buildPistol } from './src/weapon.js';
+
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d12);
+
+// mismo entorno PMREM que el juego
+{
+  const ecv = document.createElement('canvas'); ecv.width = 64; ecv.height = 32;
+  const ec = ecv.getContext('2d');
+  const eg = ec.createLinearGradient(0, 0, 0, 32);
+  eg.addColorStop(0.0, '#2c4f7c'); eg.addColorStop(0.42, '#16263f');
+  eg.addColorStop(0.52, '#3a1f46'); eg.addColorStop(1.0, '#06070c');
+  ec.fillStyle = eg; ec.fillRect(0, 0, 64, 32);
+  const envTex = new THREE.CanvasTexture(ecv);
+  envTex.mapping = THREE.EquirectangularReflectionMapping;
+  envTex.colorSpace = THREE.SRGBColorSpace;
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromEquirectangular(envTex).texture;
+  scene.environmentIntensity = 0.9;
+}
+
+// luces de calle: cian cenital, magenta lateral, relleno cálido
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x2a2f3a, 1.1));
+scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+const k = new THREE.DirectionalLight(0xffffff, 3.0); k.position.set(-1.2, 2.0, 1.4); scene.add(k);
+const m = new THREE.DirectionalLight(0xff4fd8, 0.9); m.position.set(1.8, 0.6, -1.2); scene.add(m);
+const r = new THREE.PointLight(0xffd9a0, 1.2, 6); r.position.set(0.6, 0.35, 1.2); scene.add(r);
+
+const cam = new THREE.PerspectiveCamera(30, W / H, 0.01, 20);
+
+function view(rx, ry, dist, ty) {
+  const g = new THREE.Group();
+  const gun = buildPistol(0x49e6ff).group;
+  gun.rotation.set(rx, ry, 0);
+  g.add(gun);
+  g.position.set(0, -0.03, 0);
+  return g;
+}
+
+const side = view(0, Math.PI / 2, 0, 0);
+const three4 = view(0.14, -0.95, 0, 0);
+const front = view(0, Math.PI, 0, 0);
+side.position.x = -0.235; three4.position.x = 0; front.position.x = 0.235;
+scene.add(side, three4, front);
+
+// suelo de referencia
+const grid = new THREE.GridHelper(3, 30, 0x1b2330, 0x141a24);
+grid.position.y = -0.12; scene.add(grid);
+
+cam.position.set(0, 0.075, 0.86);
+cam.lookAt(0, -0.015, 0);
+
+function loop() {
+  requestAnimationFrame(loop);
+  renderer.render(scene, cam);
+}
+loop();
+window.__ready = true;
+</script>
+</body></html>

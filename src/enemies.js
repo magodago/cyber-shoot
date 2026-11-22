@@ -1679,7 +1679,7 @@ export const ENEMY_DEFS = {
     Class: Sniper, turn: 6
   },
   boss: {
-    kind: 'boss', hp: 900, score: 1500, color: 0xff9f43, scale: 3.1,
+    kind: 'boss', hp: 900, score: 1500, color: 0xff9f43, scale: 1.6,
     aimTime: 1.25, burst: 4, burstGap: 0.17, cool: 0.95,
     boltSpeed: 23, spread: 0.95, damage: 12, rise: 1.0, riseTime: 0.9,
     Class: Boss, turn: 3.2
