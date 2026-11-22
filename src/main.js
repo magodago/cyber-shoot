@@ -637,6 +637,11 @@ function startLevel(level) {
   music.setIntensity(1);
   updateHud(true);
   hideOverlay();
+
+  // Precalienta los shaders del sector MIENTRAS aún se ve el cartel: si no, el
+  // primer frame del nivel se queda medio segundo compilando materiales nuevos
+  // (en Quest se nota como congelación al empezar el nivel 1).
+  if (renderer.compile) renderer.compile(scene, camera);
 }
 
 function clearEnemies() {
@@ -1281,6 +1286,10 @@ function initDesktop() {
     camera.rotation.x = pitch;
   });
   document.addEventListener('keydown', (e) => {
+    // carteles: cualquier tecla de acción los pasa sin esperar
+    if (S.mode === 'story' && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'KeyF' || e.code === 'KeyE')) {
+      e.preventDefault(); story.skip(); return;
+    }
     if (e.code === 'KeyR') { weapon.reload('L', true); weapon.reload('R', true); }
     if (e.code === 'KeyA' || e.code === 'ArrowLeft') input.left = true;
     if (e.code === 'KeyD' || e.code === 'ArrowRight') input.right = true;
@@ -1324,9 +1333,14 @@ function initXR() {
     const c = renderer.xr.getController(i);
     c.addEventListener('connected', (ev) => { c.userData.handedness = ev.data.handedness; });
     c.addEventListener('selectstart', () => {
-      const hand = c.userData.hand === 'L' ? 'L' : (c.userData.handedness === 'left' ? 'L' : 'R');
       if (audio.ready) audio.resume();
+      // en VR el gatillo es el botón universal: pasa los carteles
+      if (S.mode === 'story') { story.skip(); return; }
+      const hand = c.userData.hand === 'L' ? 'L' : (c.userData.handedness === 'left' ? 'L' : 'R');
       weapon.fire(hand);
+    });
+    c.addEventListener('squeezestart', () => {
+      if (S.mode === 'story') story.skip();
     });
   }
 }

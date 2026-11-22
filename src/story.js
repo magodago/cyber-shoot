@@ -44,6 +44,7 @@ const GRAIN = (() => {
 })();
 
 export function createStory(scene, camera) {
+  // Lienzo auxiliar: solo se usa para medir texto (nunca se sube a la GPU).
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
@@ -52,20 +53,33 @@ export function createStory(scene, camera) {
   art.width = W; art.height = H;
   const actx = art.getContext('2d');
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  // Página estática (arte, título, caja, pistas): se sube a la GPU UNA vez por
+  // viñeta. Antes se rehacía y se subían 5,7 MB de textura en cada frame, y el
+  // arranque del nivel se atascaba (en escritorio caía de 130 a 15 fps).
+  const page = document.createElement('canvas');
+  page.width = W; page.height = H;
+  const pg = page.getContext('2d');
 
-  const mat = new THREE.MeshBasicMaterial({
+  const pageTex = new THREE.CanvasTexture(page);
+  pageTex.colorSpace = THREE.SRGBColorSpace;
+  pageTex.anisotropy = 4;
+
+  const pageMat = new THREE.MeshBasicMaterial({
     // el color atenúa la página por debajo del umbral de bloom: si no, el papel
     // crema se quema y el texto se pierde contra el resplandor
-    color: 0xc2beb2, map: tex, transparent: true, depthTest: false, depthWrite: false,
+    color: 0xc2beb2, map: pageTex, transparent: true, depthTest: false, depthWrite: false,
     toneMapped: false
   });
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), pageMat);
   plane.renderOrder = 900;
+
+  // sheet = toda la viñeta (página + capa de texto); se escala por ángulo al colgarla
+  const sheet = new THREE.Group();
+  sheet.add(plane);
+  let baseW = 1, baseH = 1;
+
   const group = new THREE.Group();
-  group.add(plane);
+  group.add(sheet);
   group.visible = false;
   scene.add(group);
 
@@ -708,9 +722,23 @@ export function createStory(scene, camera) {
   const CAP_LH = 46;
   const CAP_PAD = 36;
 
-  const page = document.createElement('canvas');
-  page.width = W; page.height = H;
-  const pg = page.getContext('2d');
+  /* capa dinámica: SOLO la caja de narración (texto, cursor y barra) */
+  const OV_X = CAP_X, OV_Y = BOT_Y;
+  const OV_W = Math.ceil(CAP_W), OV_H = Math.ceil(H - BOT_Y);
+  const ov = document.createElement('canvas');
+  ov.width = OV_W; ov.height = OV_H;
+  const octx = ov.getContext('2d');
+  const ovTex = new THREE.CanvasTexture(ov);
+  ovTex.colorSpace = THREE.SRGBColorSpace;
+  const ovMat = new THREE.MeshBasicMaterial({
+    color: 0xc2beb2, map: ovTex, transparent: true, depthTest: false, depthWrite: false,
+    toneMapped: false
+  });
+  const ovMesh = new THREE.Mesh(new THREE.PlaneGeometry(OV_W / W, OV_H / H), ovMat);
+  ovMesh.position.set((OV_X + OV_W / 2) / W - 0.5, 0.5 - (OV_Y + OV_H / 2) / H, 0.002);
+  ovMesh.renderOrder = 901;
+  sheet.add(ovMesh);
+
   let builtFor = -1;
 
   function cover(g, img, x, y, w, h, zoom, cx, cy) {
@@ -1059,7 +1087,7 @@ export function createStory(scene, camera) {
     pg.fillStyle = 'rgba(16,16,24,0.55)';
     pg.textAlign = 'right';
     pg.textBaseline = 'alphabetic';
-    pg.fillText(`${idx + 1}/${panels.length}  ·  DISPARA PARA PASAR`, CAP_X + CAP_W - CAP_PAD, BOT_Y + BOT_H - 24);
+    pg.fillText(`${idx + 1}/${panels.length}  ·  GATILLO O CLIC PARA PASAR`, CAP_X + CAP_W - CAP_PAD, BOT_Y + BOT_H - 24);
     pg.restore();
 
     // grano de papel sobre todo
@@ -1068,73 +1096,57 @@ export function createStory(scene, camera) {
     pg.fillStyle = pg.createPattern(GRAIN, 'repeat');
     pg.fillRect(0, 0, W, H);
     pg.restore();
+
+    pageTex.needsUpdate = true;   // una sola subida por viñeta
   }
 
-  function renderPanel() {
-    const p = panels[idx] || {};
+  let lastKey = '';
+  function renderPanel(force) {
     const T = t;
-    if (builtFor !== idx) { buildPage(); builtFor = idx; }
+    if (builtFor !== idx) { buildPage(); builtFor = idx; lastKey = ''; }
 
-    const inT = ease(T / 0.55);
-    ctx.clearRect(0, 0, W, H);
-    const z = 1 + (1 - inT) * 0.07;
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate((1 - inT) * -0.018);
-    ctx.scale(z, z);
-    ctx.translate(-W / 2, -H / 2 + (1 - inT) * 46);
-    ctx.drawImage(page, 0, 0);
-    ctx.restore();
-
-    // narración mecanografiada
+    // Solo se repinta cuando el texto, la barra o el cursor cambian de verdad:
+    // el arte de la página ya está en su textura y no se vuelve a subir.
     const speed = 68;
-    let budget = Math.floor(Math.max(0, T - 0.22) * speed);
-    ctx.save();
-    ctx.font = CAP_FONT;
-    ctx.fillStyle = '#12121a';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    let y = BOT_Y + 78;
-    for (const ln of lines) {
-      if (budget <= 0) break;
-      const show = ln.slice(0, budget);
-      budget -= ln.length;
-      ctx.fillText(show, CAP_X + CAP_PAD, y);
-      y += CAP_LH;
-    }
-    // cursor
-    if (budget > 0 && Math.floor(T * 3) % 2 === 0) {
-      ctx.fillStyle = RED;
-      ctx.fillRect(CAP_X + CAP_PAD, y - 26, 14, 22);
-    }
-    ctx.restore();
-
-    // barra de avance
+    const shown = Math.floor(Math.max(0, T - 0.22) * speed);
     const reveal = total / speed;
     const hold = Math.max(4.5, Math.min(13, total * 0.05));
     const prog = clamp(T / (reveal + hold), 0, 1);
-    ctx.save();
-    ctx.fillStyle = 'rgba(16,16,24,0.16)';
-    ctx.fillRect(CAP_X + CAP_PAD, BOT_Y + BOT_H - 74, CAP_W - CAP_PAD * 2 - 26, 6);
-    ctx.fillStyle = RED;
-    ctx.fillRect(CAP_X + CAP_PAD, BOT_Y + BOT_H - 74, (CAP_W - CAP_PAD * 2 - 26) * prog, 6);
-    ctx.restore();
+    const blink = shown < total + 1 ? Math.floor(T * 3) % 2 : 0;
+    const key = `${shown}|${Math.round(prog * 300)}|${blink}`;
+    if (!force && key === lastKey) return;
+    lastKey = key;
 
-    // línea de barrido al entrar
-    if (inT < 1) {
-      const sx = W * inT;
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const lg = ctx.createLinearGradient(sx - 190, 0, sx + 40, 0);
-      lg.addColorStop(0, 'rgba(73,230,255,0)');
-      lg.addColorStop(0.78, 'rgba(73,230,255,0.5)');
-      lg.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = lg;
-      ctx.fillRect(sx - 190, 0, 230, H);
-      ctx.restore();
+    octx.clearRect(0, 0, OV_W, OV_H);
+    octx.save();
+    octx.translate(-OV_X, -OV_Y);   // se dibuja en coordenadas de página
+    octx.font = CAP_FONT;
+    octx.fillStyle = '#12121a';
+    octx.textAlign = 'left';
+    octx.textBaseline = 'alphabetic';
+
+    let budget = shown;
+    let y = BOT_Y + 78;
+    for (const ln of lines) {
+      if (budget <= 0) break;
+      octx.fillText(ln.slice(0, budget), CAP_X + CAP_PAD, y);
+      budget -= ln.length;
+      y += CAP_LH;
+    }
+    if (budget > 0 && blink) {
+      octx.fillStyle = RED;
+      octx.fillRect(CAP_X + CAP_PAD, y - 26, 14, 22);
     }
 
-    tex.needsUpdate = true;
+    // barra de avance
+    const bw = CAP_W - CAP_PAD * 2 - 26;
+    octx.fillStyle = 'rgba(16,16,24,0.16)';
+    octx.fillRect(CAP_X + CAP_PAD, BOT_Y + BOT_H - 74, bw, 6);
+    octx.fillStyle = RED;
+    octx.fillRect(CAP_X + CAP_PAD, BOT_Y + BOT_H - 74, bw * prog, 6);
+    octx.restore();
+
+    ovTex.needsUpdate = true;
   }
 
   /* ------------------------------------------------------------- control */
@@ -1148,7 +1160,7 @@ export function createStory(scene, camera) {
     ctx.font = `500 34px ${BODY}`;
     lines = wrap(p.text || '', CAP_W - CAP_PAD * 2, CAP_FONT);
     total = lines.reduce((n, l) => n + l.length, 0);
-    renderPanel();
+    renderPanel(true);
     const voice = p.voice === undefined ? p.text : p.voice;
     if (voice) say(voice);
     else if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -1180,7 +1192,8 @@ export function createStory(scene, camera) {
     const tanH = Math.tan(23 * Math.PI / 180) * 2 * D;
     let hh = tanV, ww = hh * W / H;
     if (ww > tanH) { ww = tanH; hh = ww * H / W; }
-    plane.scale.set(ww, hh, 1);
+    sheet.scale.set(ww, hh, 1);
+    baseW = ww; baseH = hh;
     anchor = true;
   }
 
@@ -1224,8 +1237,16 @@ export function createStory(scene, camera) {
       const distP = toP.length();
       if (distP > 1e-4 && (toP.normalize().dot(flat) < -0.3 || distP > 9 || distP < 2.4)) placePanel();
 
-      // vida propia mínima: se mece como una pantalla colgada, no sigue la cabeza
-      plane.rotation.z = Math.sin(t * 0.5) * 0.004;
+      // vida propia mínima: se mece como una pantalla colgada, no sigue la cabeza.
+      // La entrada (golpe de escala + destello) va en la malla, no en el lienzo:
+      // antes se rehacía la página entera en cada frame durante el arranque.
+      const e = ease(Math.min(1, t / 0.55));
+      const g2 = 1 + (1 - e) * 0.08;
+      sheet.scale.set(baseW * g2, baseH * g2, 1);
+      sheet.rotation.z = Math.sin(t * 0.5) * 0.004 + (1 - e) * -0.02;
+      const f = (1 - e) * 0.3;
+      pageMat.color.setRGB(0.761 + f, 0.745 + f, 0.698 + f);
+      ovMat.color.copy(pageMat.color);
 
       renderPanel();
 
