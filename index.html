@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Cyber Shoot</title>
+<style>
+  :root{
+    --cy:#49e6ff; --mg:#ff4fd8; --rd:#ff2d55; --am:#ffe066; --ink:#05070f;
+    --glass:rgba(6,11,24,.62);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#05070f;overflow:hidden;
+    font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:#fff;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas{display:block;position:fixed;inset:0}
+
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5;opacity:1;transition:opacity .3s}
+  #hud.dim{opacity:.35}
+
+  /* vida */
+  .vitals{position:absolute;left:22px;bottom:20px;width:min(34vw,330px)}
+  .vitals .row{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+  .vitals b{font-size:12px;letter-spacing:.22em;color:#8fdfff;font-weight:700}
+  .vitals #hp-num{font-size:26px;font-weight:800;line-height:1;margin-left:auto;
+    font-variant-numeric:tabular-nums}
+  .track{height:9px;border-radius:6px;background:rgba(255,255,255,.12);overflow:hidden;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+  #hp-fill{height:100%;width:100%;border-radius:6px;transition:width .18s ease, background .3s;
+    background:linear-gradient(90deg,#49e6ff,#5cff9d)}
+
+  /* puntuación */
+  .scorebar{position:absolute;left:50%;top:16px;transform:translateX(-50%);
+    display:flex;gap:18px;align-items:center;padding:8px 18px;border-radius:14px;
+    background:var(--glass);border:1px solid rgba(73,230,255,.22);
+    backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.45)}
+  .scorebar .lbl{font-size:10px;letter-spacing:.26em;color:#7fbcd6;font-weight:700}
+  .scorebar .val{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+  #credits{color:var(--am)}
+  #score{color:#fff}
+  #lvl{color:var(--cy);font-size:13px;letter-spacing:.18em}
+  #wave{color:rgba(255,255,255,.55);font-size:12px;letter-spacing:.16em;min-width:96px;text-align:right}
+
+  #combo{position:absolute;left:50%;top:78px;transform:translateX(-50%);
+    font-size:34px;font-weight:900;color:var(--mg);opacity:0;transition:opacity .2s;
+    text-shadow:0 0 22px rgba(255,79,216,.8);letter-spacing:-.02em}
+
+  /* balas */
+  .ammo{position:absolute;bottom:20px;display:flex;flex-direction:column;gap:7px;align-items:center}
+  .ammo.l{left:calc(50% - 140px)} .ammo.r{left:calc(50% + 140px)}
+  .ammo .n{font-size:30px;font-weight:900;font-variant-numeric:tabular-nums;line-height:1;
+    color:#dff8ff;text-shadow:0 0 18px rgba(73,230,255,.45);transition:color .12s,transform .12s}
+  .ammo.r .n{color:#ffe3fa;text-shadow:0 0 18px rgba(255,79,216,.45)}
+  .ammo .n.dry{color:var(--rd);transform:scale(1.22)}
+  .ammo .m{width:64px;height:4px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden}
+  .ammo .m i{display:block;height:100%;width:100%;background:var(--cy);transition:width .12s}
+  .ammo.r .m i{background:var(--mg)}
+
+  /* jefe */
+  #bossbar{position:absolute;left:50%;top:86px;transform:translateX(-50%);width:min(62vw,720px);
+    opacity:0;transition:opacity .35s}
+  #bossbar .t{font-size:10px;letter-spacing:.3em;color:var(--rd);text-align:center;margin-bottom:6px;font-weight:800}
+  #bossbar .track{height:11px;background:rgba(255,45,85,.14);box-shadow:inset 0 0 0 1px rgba(255,45,85,.35)}
+  #boss-fill{height:100%;width:100%;background:linear-gradient(90deg,#ff2d55,#ff8a3d);
+    box-shadow:0 0 18px rgba(255,45,85,.7);transition:width .12s}
+
+  /* retícula */
+  #cross{position:absolute;left:50%;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);
+    opacity:.75}
+  #cross:before,#cross:after{content:"";position:absolute;background:var(--cy);border-radius:2px;
+    box-shadow:0 0 8px rgba(73,230,255,.9)}
+  #cross:before{left:50%;top:0;width:2px;height:100%;transform:translateX(-50%)}
+  #cross:after{top:50%;left:0;height:2px;width:100%;transform:translateY(-50%)}
+  body.xr #cross{display:none}
+
+  #hitflash{position:fixed;inset:0;pointer-events:none;z-index:6;opacity:0;
+    background:radial-gradient(ellipse at center,rgba(255,45,85,0) 35%,rgba(255,45,85,.75) 100%);
+    transition:opacity .12s}
+
+  /* overlay */
+  #overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(120% 90% at 50% 0%,rgba(9,16,34,.82),rgba(3,5,12,.96));
+    backdrop-filter:blur(6px);padding:24px}
+  .card{width:min(560px,92vw);text-align:center;padding:38px 34px 32px;border-radius:22px;
+    background:linear-gradient(180deg,rgba(10,18,38,.9),rgba(6,10,22,.95));
+    border:1px solid rgba(73,230,255,.28);box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 90px rgba(73,230,255,.08)}
+  .kicker{font-size:11px;letter-spacing:.42em;color:var(--cy);font-weight:800;margin-bottom:14px}
+  #ov-title{font-size:clamp(30px,6vw,46px);font-weight:900;letter-spacing:-.02em;margin:0 0 12px;
+    background:linear-gradient(92deg,#fff,#9fe9ff 45%,#ff9bea);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #ov-sub{font-size:15px;line-height:1.55;color:rgba(255,255,255,.66);margin:0 0 22px}
+  #ov-extra{margin-bottom:22px}
+  #ov-btn,.ghost{width:100%;padding:15px 18px;border-radius:13px;border:0;cursor:pointer;
+    font-family:inherit;font-size:15px;font-weight:800;letter-spacing:.1em;transition:transform .12s,filter .12s}
+  #ov-btn{background:linear-gradient(92deg,#49e6ff,#7c9bff);color:#04121c;
+    box-shadow:0 12px 34px rgba(73,230,255,.32)}
+  .ghost{margin-top:10px;background:transparent;color:#bff0ff;
+    border:1px solid rgba(73,230,255,.4);box-shadow:none}
+  #ov-btn:hover,.ghost:hover{transform:translateY(-1px);filter:brightness(1.06)}
+  .hint{margin-top:18px;font-size:11.5px;line-height:1.7;color:rgba(255,255,255,.38);letter-spacing:.02em}
+  /* portada: el título vive en 3D, aquí solo queda un botón */
+  #overlay.cover{align-items:flex-end;padding:0 24px 8vh;backdrop-filter:none;
+    background:radial-gradient(120% 100% at 50% 30%,rgba(4,7,16,.05),rgba(3,5,12,.55) 62%,rgba(2,3,8,.86))}
+  #overlay.cover .card{background:none;border:0;box-shadow:none;padding:0;width:min(300px,78vw)}
+  #overlay.cover .kicker,#overlay.cover #ov-title,
+  #overlay.cover #ov-sub,#overlay.cover #ov-extra{display:none}
+  #overlay.cover #ov-btn{box-shadow:0 0 0 1px rgba(73,230,255,.55),0 18px 60px rgba(73,230,255,.4);
+    animation:coverPulse 2.6s ease-in-out infinite}
+  @keyframes coverPulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  .fps{position:absolute;right:10px;top:10px;font-size:11px;color:rgba(255,255,255,.3);letter-spacing:.1em}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="hud">
+    <div class="scorebar">
+      <div><div class="lbl">PUNTOS</div><div class="val" id="score">0</div></div>
+      <div><div class="lbl">CRÉDITOS</div><div class="val" id="credits">0 cr</div></div>
+      <div><div class="lbl">&nbsp;</div><div class="val" id="lvl">NIVEL 1</div></div>
+      <div id="wave"></div>
+    </div>
+
+    <div id="combo"></div>
+    <div id="bossbar"><div class="t">OBJETIVO PRIORITARIO</div><div class="track"><div id="boss-fill"></div></div></div>
+    <div id="cross"></div>
+
+    <div class="vitals">
+      <div class="row"><b>INTEGRIDAD</b><span id="hp-num">100</span></div>
+      <div class="track"><div id="hp-fill"></div></div>
+    </div>
+
+    <div class="ammo l"><div class="n" id="ammoL">12</div><div class="m"><i id="magL"></i></div></div>
+    <div class="ammo r"><div class="n" id="ammoR">12</div><div class="m"><i id="magR"></i></div></div>
+  </div>
+
+  <div id="hitflash"></div>
+
+  <div id="overlay">
+    <div class="card">
+      <div class="kicker">NEOLABS // ARCADE</div>
+      <h1 id="ov-title">CYBER SHOOT</h1>
+      <p id="ov-sub"></p>
+      <div id="ov-extra"></div>
+      <button id="ov-btn">JUGAR</button>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
