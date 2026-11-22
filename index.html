@@ -4,6 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Cyber Shoot VR</title>
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<script>
+/* El HTML de Pages se cachea 10 min y el juego quedaba clavado en la version
+   vieja aunque el push estuviera hecho. Aqui el propio HTML se compara con
+   version.json (sin cache) y si no coincide se recarga una vez con sello. */
+(function () {
+  var BUILD = 18;
+  if (window.__cbb) return;
+  fetch('./version.json?_=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.build && j.build !== BUILD && !/[?&]b=/.test(location.search)) {
+        location.replace(location.pathname + '?b=' + j.build);
+      }
+    }).catch(function () {});
+})();
+</script>
+
 <style>
   :root{
     --cy:#49e6ff; --mg:#ff4fd8; --rd:#ff2d55; --am:#ffe066; --ink:#05070f;
@@ -167,6 +185,6 @@
       window.__err = 'promise: ' + (e.reason && e.reason.message || e.reason);
     });
   </script>
-  <script type="module" src="./src/main.js?v=17"></script>
+  <script type="module" src="./src/main.js?v=18"></script>
 </body>
 </html>
