@@ -1095,6 +1095,7 @@ function showCover() {
   if (!ov) return;
   ov.style.display = 'flex';
   ov.classList.add('cover');
+  document.body.classList.add('on-cover');
   $('#ov-title').textContent = '';
   $('#ov-sub').textContent = '';
   $('#ov-extra').innerHTML = '';
@@ -1121,6 +1122,7 @@ function showOverlay(title, sub, btn, fn, extra) {
 function hideOverlay() {
   const ov = $('#overlay');
   if (ov) ov.style.display = 'none';
+  document.body.classList.remove('on-cover');
 }
 
 /* ------------------------------------------------------------------ entrada */
