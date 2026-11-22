@@ -549,31 +549,23 @@ class Panel {
     c.font = '500 26px Inter, system-ui, sans-serif';
     c.fillText('nivel ' + S.level + ' · ' + S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión', 512, 280);
 
-    roundRect(c, 150, 330, 420, 120, 18);
+    // Un solo botón, grande y centrado: vuelve a la portada, donde está el
+    // botón de jugar. Antes había REINICIAR + INICIO y el inicio se quedaba
+    // sin forma de empezar (sobre todo dentro del visor, sin DOM).
+    roundRect(c, 216, 330, 592, 128, 20);
     c.fillStyle = 'rgba(73,230,255,0.16)';
     c.fill();
     c.strokeStyle = 'rgba(73,230,255,0.9)';
     c.lineWidth = 3;
     c.stroke();
     c.fillStyle = '#ffffff';
-    c.font = '800 34px Inter, system-ui, sans-serif';
-    c.fillText('REINICIAR', 360, 404);
-    this.rects.push({ kind: 'next', x: 150, y: 330, w: 420, h: 120 });
-
-    roundRect(c, 600, 330, 274, 120, 18);
-    c.fillStyle = 'rgba(255,79,216,0.12)';
-    c.fill();
-    c.strokeStyle = 'rgba(255,79,216,0.8)';
-    c.lineWidth = 3;
-    c.stroke();
-    c.fillStyle = '#ffffff';
-    c.font = '800 32px Inter, system-ui, sans-serif';
-    c.fillText('INICIO', 737, 404);
-    this.rects.push({ kind: 'home', x: 600, y: 330, w: 274, h: 120 });
+    c.font = '800 44px Inter, system-ui, sans-serif';
+    c.fillText('INICIO', 512, 408);
+    this.rects.push({ kind: 'home', x: 216, y: 330, w: 592, h: 128 });
 
     c.fillStyle = 'rgba(255,255,255,0.4)';
     c.font = '500 18px Inter, system-ui, sans-serif';
-    c.fillText('dispara al botón', 512, 486);
+    c.fillText('dispara para volver a la portada', 512, 494);
   }
 }
 
@@ -1019,14 +1011,15 @@ function gameOver(why) {
   panel.flashMsg = '';
   panel.mode = 'dead';
   panel.show('dead');
+  // Un único botón: a la portada, que ya tiene su JUGAR (también dentro del visor).
   showOverlay(
     'SISTEMA CAÍDO',
     (why ? why + ' · ' : '') + 'Puntuación ' + S.score.toLocaleString('es-ES'),
-    'REINICIAR',
-    () => restartRun(),
+    'INICIO',
+    () => backToHome(),
     '',
-    'VOLVER AL INICIO',
-    () => backToHome()
+    '',
+    null
   );
 }
 
@@ -1507,6 +1500,11 @@ function initXR() {
       if (audio.ready) audio.resume();
       // en VR el gatillo es el botón universal: pasa los carteles
       if (S.mode === 'story') { story.skip(); return; }
+      // portada dentro del visor: el gatillo es el botón de jugar
+      if (S.mode === 'cover') {
+        audio.init(); audio.resume(); music.start();
+        startCampaign(); return;
+      }
       const hand = c.userData.hand === 'L' ? 'L' : (c.userData.handedness === 'left' ? 'L' : 'R');
       weapon.fire(hand);
     });

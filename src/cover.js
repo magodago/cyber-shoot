@@ -94,6 +94,26 @@ export function createCover(scene, opts = {}) {
   glow.position.set(0, 0, -2.4);
   group.add(glow);
 
+  // Botón de jugar en 3D: la portada también se ve dentro del visor, donde el
+  // HTML no existe. Sin esto, volver al inicio desde el panel de muerte dejaba
+  // una pantalla de título sin ninguna forma de empezar.
+  const btnTex = playTexture();
+  const btn = new THREE.Group();
+  const plate = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.3, 0.72),
+    new THREE.MeshBasicMaterial({ map: btnTex, transparent: true, toneMapped: false })
+  );
+  btn.add(plate);
+  const btnGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: radialTexture(), color: 0x49e6ff, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+  }));
+  btnGlow.scale.set(3.4, 1.5, 1);
+  btnGlow.position.z = -0.06;
+  btn.add(btnGlow);
+  btn.position.set(0, -0.86, 0.35);
+  group.add(btn);
+
   group.position.set(0, 1.72, -5.6);
   scene.add(group);
 
@@ -107,7 +127,11 @@ export function createCover(scene, opts = {}) {
       title.rotation.y = Math.sin(t * 0.34) * 0.16;
       title.rotation.x = Math.sin(t * 0.5) * 0.035;
       glow.material.opacity = 0.34 + Math.sin(t * 1.5) * 0.08;
+      const p = 1 + Math.sin(t * 2.2) * 0.035;
+      btn.scale.set(p, p, 1);
+      btnGlow.material.opacity = 0.34 + Math.sin(t * 2.2) * 0.14;
     },
+    button: btn,
     show(v) { group.visible = v; document.body.classList.toggle('on-cover', !!v); }
   };
 }
@@ -122,6 +146,43 @@ function radialTexture() {
   grd.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = grd;
   g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Placa holográfica con la palabra JUGAR (canvas -> textura, sin DOM)
+function playTexture() {
+  const c = document.createElement('canvas');
+  c.width = 768; c.height = 240;
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height, r = 46;
+  g.beginPath();
+  g.moveTo(r, 6);
+  g.arcTo(w - 6, 6, w - 6, h - 6, r);
+  g.arcTo(w - 6, h - 6, 6, h - 6, r);
+  g.arcTo(6, h - 6, 6, 6, r);
+  g.arcTo(6, 6, w - 6, 6, r);
+  g.closePath();
+  const grd = g.createLinearGradient(0, 0, w, h);
+  grd.addColorStop(0, 'rgba(10,32,48,0.92)');
+  grd.addColorStop(1, 'rgba(6,18,32,0.92)');
+  g.fillStyle = grd;
+  g.fill();
+  g.lineWidth = 6;
+  g.strokeStyle = 'rgba(73,230,255,0.95)';
+  g.stroke();
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = '#d9fbff';
+  g.shadowColor = 'rgba(73,230,255,0.95)';
+  g.shadowBlur = 26;
+  g.font = '800 96px Inter, system-ui, sans-serif';
+  g.fillText('J U G A R', w / 2, h / 2 - 6);
+  g.shadowBlur = 0;
+  g.font = '600 26px Inter, system-ui, sans-serif';
+  g.fillStyle = 'rgba(150,230,255,0.75)';
+  g.fillText('GATILLO PARA EMPEZAR', w / 2, h - 42);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TEX } from './fx.js';
+import { roundBox, detailSet, hose, vent, rivets, decal } from './detail.js';
 
 // ---------------------------------------------------------------------------
 // ENEMIGOS: aparecen en puntos fijos (suelo, balcones, azoteas, aire),
@@ -22,11 +23,16 @@ function stdMat(color, metal = 0.8, rough = 0.35) {
   c.setHSL(hsl.h, Math.min(hsl.s, 0.34), hsl.l);
   const lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
   if (lum < 0.26) c.offsetHSL(0, 0, 0.26 - lum);
+  const dset = detailSet(1);
   const m = new THREE.MeshStandardMaterial({
     color: c, metalness: Math.min(metal, 0.92), roughness: Math.max(rough, 0.22),
-    envMapIntensity: 1.9
+    envMapIntensity: 1.9,
+    // micro-detalle real: juntas, arañazos y grano. Sin esto el blindaje es
+    // plástico perfecto y por eso los enemigos parecían de juguete.
+    map: dset.map, normalMap: dset.normalMap, roughnessMap: dset.roughnessMap,
+    normalScale: new THREE.Vector2(0.85, 0.85)
   });
-  m.emissive = c.clone().multiplyScalar(0.09);
+  m.emissive = c.clone().multiplyScalar(0.13);
   m.emissiveIntensity = 1;
   return m;
 }
@@ -362,55 +368,139 @@ export class Enemy {
 // ---------------------------------------------------------------------- dron
 export class Drone extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xdfe7f0, 1.0, 0.2));
-    const accent = neonMat(this.color);
 
-    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), body);
-    core.scale.set(1.1, 0.7, 1.35);
-    this.group.add(core);
+    const hull = this._mat(stdMat(0xd3dbe6, 0.95, 0.28));
+    const plate = this._mat(stdMat(0x7c8794, 0.92, 0.45));
+    const dark = this._mat(stdMat(0x22272e, 0.8, 0.6));
+    const carbon = this._mat(stdMat(0x0e1114, 0.35, 0.55));
+    const accent = neonMat(this.color);
+    const lit = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x140a0e, emissive: 0xff2d55, emissiveIntensity: 2.2,
+      metalness: 0.4, roughness: 0.3
+    }));
+
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      this.group.add(m);
+      return m;
+    };
+    const RB = (w, h, d, r) => roundBox(w, h, d, r === undefined ? 0.03 : r);
+
+    /* ---------------------------------------------------------------- fuselaje */
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.3, 20, 14), hull);
+    shell.scale.set(1.12, 0.72, 1.45);
+    this.group.add(shell);
+    // cintura de chapa: rompe la forma de huevo
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 8, 26), plate);
+    belt.rotation.x = Math.PI / 2;
+    belt.scale.set(1.05, 1.32, 1);
+    belt.position.y = 0.005;
+    this.group.add(belt);
+    add(RB(0.26, 0.06, 0.62, 0.02), plate, 0, 0.2, 0.02);
+    add(new THREE.CylinderGeometry(0.008, 0.012, 0.26, 5), plate, 0.07, 0.34, 0.12, 0.24);
+    add(new THREE.SphereGeometry(0.014, 6, 5), accent, 0.1, 0.46, 0.15);
+
+    // paneles de acceso y calca
+    add(RB(0.2, 0.02, 0.24, 0.01), plate, 0, 0.215, -0.24, -0.08);
+    const tag = decal('stencil', 0.16, 0.08, { text: 'N-04', color: '#c8d2dc' });
+    tag.position.set(0, 0.226, 0.12);
+    tag.rotation.x = -Math.PI / 2;
+    this.group.add(tag);
+    const hz = decal('hazard', 0.16, 0.045);
+    hz.position.set(0.34, 0.02, -0.02);
+    hz.rotation.set(0, Math.PI / 2, 0);
+    this.group.add(hz);
     this.addHit(hitbox(0.42, 1, this, 'body'));
 
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.022, 6, 24), accent);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.02;
-    this.group.add(ring);
-
+    /* ------------------------------------------------------------------ brazos */
     this.rotors = [];
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.028, 0.05), body);
-      arm.position.set(Math.cos(a) * 0.28, 0.05, Math.sin(a) * 0.28);
+      const cx = Math.cos(a), cz = Math.sin(a);
+      const arm = new THREE.Mesh(RB(0.44, 0.05, 0.075, 0.022), plate);
+      arm.position.set(cx * 0.26, 0.03, cz * 0.26);
       arm.rotation.y = -a;
       this.group.add(arm);
+      // refuerzo y cable por debajo del brazo
+      const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.4, 6), dark);
+      brace.position.set(cx * 0.28, -0.045, cz * 0.28);
+      brace.rotation.set(Math.PI / 2, 0, -a + Math.PI / 2);
+      this.group.add(brace);
+
+      const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.09, 12), dark);
+      pod.position.set(cx * 0.5, 0.06, cz * 0.5);
+      this.group.add(pod);
+      // aro protector del rotor (arco, no círculo cerrado)
+      const guard = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.011, 5, 20, Math.PI * 1.25), plate);
+      guard.rotation.x = -Math.PI / 2;
+      guard.rotation.z = a + 0.4;
+      guard.position.set(cx * 0.5, 0.1, cz * 0.5);
+      this.group.add(guard);
 
       const rotor = new THREE.Group();
-      rotor.position.set(Math.cos(a) * 0.5, 0.08, Math.sin(a) * 0.5);
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.008, 0.035), accent);
+      rotor.position.set(cx * 0.5, 0.09, cz * 0.5);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.007, 0.03), carbon);
       rotor.add(blade);
-      const blade2 = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.008, 0.34), accent);
+      const blade2 = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.007, 0.32), carbon);
       rotor.add(blade2);
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 8), body);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.05, 10), plate);
       rotor.add(hub);
+      const nav = new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 5), i % 2 ? accent : lit);
+      nav.position.set(cx * 0.09, 0.015, cz * 0.09);
+      rotor.add(nav);
       this.group.add(rotor);
       this.rotors.push(rotor);
     }
 
-    // ojo / cañón frontal
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 10), neonMat(0xff2d55));
-    eye.position.set(0, -0.02, -0.42);
-    this.group.add(eye);
-    this.addHit(hitbox(0.2, 2.6, this, 'head'));
+    /* ------------------------------------------------------- torreta frontal */
+    // soporte y cardán: la cámara cuelga, no va pegada al casco
+    add(RB(0.16, 0.09, 0.12, 0.02), dark, 0, -0.15, -0.3);
+    const gimbal = new THREE.Group();
+    gimbal.position.set(0, -0.22, -0.36);
+    const gBody = new THREE.Mesh(new THREE.SphereGeometry(0.085, 14, 10), plate);
+    gBody.scale.set(1.1, 0.95, 1.1);
+    gimbal.add(gBody);
+    const lensHouse = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.07, 14), dark);
+    lensHouse.rotation.x = Math.PI / 2;
+    lensHouse.position.z = -0.065;
+    gimbal.add(lensHouse);
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.04, 14, 10), lit);
+    lens.position.z = -0.098;
+    gimbal.add(lens);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: TEX.glow, color: 0xff2d55, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    halo.scale.setScalar(0.3);
+    halo.position.z = -0.11;
+    gimbal.add(halo);
+    for (const sd of [-1, 1]) {
+      const fork = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.11, 0.05), dark);
+      fork.position.set(sd * 0.095, 0.05, 0);
+      gimbal.add(fork);
+    }
+    this.group.add(gimbal);
+    this.gimbal = gimbal;
+    this.addHit(hitbox(0.17, 2.6, this, 'head', -0.02));
 
-    const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.26, 8), body);
-    gun.rotation.x = Math.PI / 2;
-    gun.position.set(0, -0.16, -0.3);
-    this.group.add(gun);
+    // pods de misiles bajo los brazos delanteros
+    for (const sd of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 10), plate, sd * 0.28, -0.12, -0.16, Math.PI / 2);
+      add(new THREE.CylinderGeometry(0.026, 0.026, 0.02, 10), dark, sd * 0.28, -0.12, -0.27, Math.PI / 2);
+      add(RB(0.02, 0.06, 0.12, 0.008), dark, sd * 0.28, -0.05, -0.16);
+    }
+    // patines
+    for (const sd of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.014, 0.014, 0.34, 6), plate, sd * 0.17, -0.24, 0.02, Math.PI / 2);
+      add(new THREE.CylinderGeometry(0.012, 0.012, 0.12, 6), dark, sd * 0.17, -0.18, -0.1, 0.4);
+    }
+    // luces de posición
+    add(new THREE.SphereGeometry(0.016, 6, 5), accent, 0, -0.02, 0.42);
+    add(new THREE.SphereGeometry(0.013, 6, 5), lit, 0, 0.16, -0.36);
 
-    const under = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.1), accent);
-    under.position.set(0, -0.28, -0.1);
-    this.group.add(under);
-
-    this.muzzle.position.set(0, -0.16, -0.45);
+    this.muzzle.position.set(0, -0.22, -0.47);
     this.charge.position.copy(this.muzzle.position);
     this.baseY = this.node.pos.y;
   }
@@ -450,37 +540,63 @@ export class Drone extends Enemy {
 // ------------------------------------------------------------------ perro ruedas
 export class Hound extends Enemy {
   _build() {
-    // el perro tiene que leerse sobre el asfalto: chasis claro con brillo
-    // metálico bajo (metalness alto sin envMap = negro) y emisivo propio
-    const body = this._mat(stdMat(0xc3cddb, 0.28, 0.42));
-    const dark = this._mat(stdMat(0x8d9aac, 0.32, 0.5));
+
+    const body = this._mat(stdMat(0xc0cad7, 0.85, 0.36));
+    const plate = this._mat(stdMat(0x77828f, 0.9, 0.5));
+    const dark = this._mat(stdMat(0x23282f, 0.75, 0.62));
+    const rubber = this._mat(stdMat(0x101315, 0.1, 0.95));
     const accent = neonMat(this.color);
+    const lit = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x140a0e, emissive: this.color, emissiveIntensity: 2.2,
+      metalness: 0.4, roughness: 0.35
+    }));
 
-    // chasis bajo y alargado
-    const chassis = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.52, 6, 12), body);
-    chassis.rotation.z = Math.PI / 2;
-    chassis.position.set(0, 0.34, 0.02);
-    this.group.add(chassis);
-    this.addHit(hitbox(0.42, 1, this, 'body'));
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      this.group.add(m);
+      return m;
+    };
+    const RB = (w, h, d, r) => roundBox(w, h, d, r === undefined ? 0.025 : r);
 
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.26), dark);
-    plate.position.set(0, 0.47, 0.02);
-    this.group.add(plate);
-
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.014, 0.02), accent);
-    stripe.position.set(0, 0.52, 0.02);
-    this.group.add(stripe);
-
-    // franjas laterales y charco de luz: silueta visible a contraluz
-    for (const s of [-1, 1]) {
-      const flank = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.5), accent);
-      flank.position.set(s * 0.175, 0.38, 0.02);
-      this.group.add(flank);
+    /* --------------------------------------------------------------- chasis */
+    add(RB(0.32, 0.24, 1.08, 0.07), body, 0, 0.37, 0.02);
+    for (const sd of [-1, 1]) {
+      // faldón lateral atornillado: dos capas de chapa
+      const skirt = add(RB(0.1, 0.2, 0.8, 0.04), plate, sd * 0.22, 0.34, 0.02);
+      skirt.rotation.z = sd * 0.1;
+      add(RB(0.03, 0.05, 0.62, 0.012), accent, sd * 0.268, 0.38, 0.02);
+      // rejilla de refrigeración en el costado
+      for (let k = 0; k < 4; k++) {
+        add(new THREE.BoxGeometry(0.012, 0.045, 0.11), dark, sd * 0.262, 0.44, -0.12 + k * 0.13);
+      }
+      // pistones de suspensión visibles
+      add(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 8), plate, sd * 0.2, 0.24, -0.3, 0.28);
+      add(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 8), plate, sd * 0.2, 0.24, 0.36, -0.28);
+      add(new THREE.SphereGeometry(0.03, 6, 5), dark, sd * 0.2, 0.15, -0.26);
+      add(new THREE.SphereGeometry(0.03, 6, 5), dark, sd * 0.2, 0.15, 0.32);
     }
+    // lomo: placa con bisagra y calca de serie
+    add(RB(0.34, 0.09, 0.72, 0.03), plate, 0, 0.51, 0.0);
+    add(RB(0.2, 0.03, 0.16, 0.01), dark, 0, 0.56, -0.14);
+    const dog = decal('stencil', 0.22, 0.11, { text: 'K-9', color: '#cbd5e0' });
+    dog.position.set(0, 0.525, 0.26);
+    dog.rotation.x = -Math.PI / 2;
+    dog.rotation.z = Math.PI;
+    this.group.add(dog);
+    const hz = decal('hazard', 0.26, 0.07);
+    hz.position.set(0.001, 0.47, 0.33);
+    hz.rotation.set(0, Math.PI / 2, 0);
+    this.group.add(hz);
+
+    // franja de luz entre las chapas y charco en el suelo
+    add(RB(0.02, 0.045, 0.66, 0.01), accent, 0.283, 0.44, 0.02);
+    add(RB(0.02, 0.045, 0.66, 0.01), accent, -0.283, 0.44, 0.02);
     const pool = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.7, 2.6),
+      new THREE.PlaneGeometry(1.4, 2.2),
       new THREE.MeshBasicMaterial({
-        map: TEX.glow, color: this.color, transparent: true, opacity: 0.55,
+        map: TEX.glow, color: this.color, transparent: true, opacity: 0.42,
         blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
       })
     );
@@ -488,67 +604,103 @@ export class Hound extends Enemy {
     pool.position.y = 0.03;
     this.group.add(pool);
 
-    // cabeza baja, tipo depredador
+    /* ---------------------------------------------------------------- cabeza */
     const head = new THREE.Group();
-    head.position.set(0, 0.36, -0.46);
-    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.19, 0.26), body);
-    skull.position.z = -0.06;
-    head.add(skull);
-    const snout = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), dark);
-    snout.position.set(0, -0.04, -0.22);
-    head.add(snout);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.035, 0.02), neonMat(0xff2d55));
-    visor.position.set(0, 0.03, -0.2);
-    head.add(visor);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.05, 0.16), dark);
-    jaw.position.set(0, -0.09, -0.2);
-    head.add(jaw);
-    for (const s of [-1, 1]) {
-      const ear = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.12, 0.06), body);
-      ear.position.set(s * 0.1, 0.13, -0.02);
-      ear.rotation.z = s * -0.25;
-      head.add(ear);
+    head.position.set(0, 0.4, -0.5);
+    const hAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      head.add(m);
+      return m;
+    };
+    hAdd(new THREE.CylinderGeometry(0.055, 0.07, 0.16, 10), dark, 0, -0.03, 0.14, Math.PI / 2);
+    hAdd(RB(0.27, 0.2, 0.28, 0.05), body, 0, 0.0, -0.06);
+    hAdd(RB(0.29, 0.07, 0.12, 0.02), plate, 0, 0.09, -0.1, 0.15);
+    // hocico partido en dos mandíbulas con dientes
+    hAdd(RB(0.2, 0.09, 0.22, 0.025), plate, 0, -0.03, -0.25);
+    hAdd(RB(0.18, 0.055, 0.19, 0.02), dark, 0, -0.115, -0.23, 0.07);
+    for (let k = 0; k < 5; k++) {
+      hAdd(new THREE.BoxGeometry(0.018, 0.03, 0.02), plate, -0.06 + k * 0.03, -0.075, -0.33, 0.2);
     }
+    // sensor principal + dos auxiliares
+    const eyeHousing = hAdd(new THREE.CylinderGeometry(0.062, 0.07, 0.07, 12), dark, 0, 0.035, -0.185, Math.PI / 2);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 14, 10), lit);
+    eye.position.set(0, 0.035, -0.218);
+    head.add(eye);
+    for (const sd of [-1, 1]) {
+      hAdd(new THREE.CylinderGeometry(0.02, 0.022, 0.05, 10), dark, sd * 0.085, 0.03, -0.19, Math.PI / 2);
+      hAdd(new THREE.SphereGeometry(0.014, 8, 6), lit, sd * 0.085, 0.03, -0.213);
+      // orejas / antenas de sensores
+      const ear = hAdd(RB(0.035, 0.14, 0.07, 0.012), plate, sd * 0.11, 0.15, -0.02);
+      ear.rotation.z = -sd * 0.22;
+      hAdd(new THREE.CylinderGeometry(0.006, 0.006, 0.12, 4), plate, sd * 0.11, 0.24, -0.03, 0.2);
+    }
+    // latiguillos cuello-cabeza
+    const hh1 = hose(new THREE.Vector3(-0.08, -0.05, 0.16), new THREE.Vector3(-0.055, 0.02, 0.0), 0.014, rubber, 0.03);
+    head.add(hh1);
+    const hh2 = hose(new THREE.Vector3(0.08, -0.05, 0.16), new THREE.Vector3(0.055, 0.02, 0.0), 0.014, rubber, 0.03);
+    head.add(hh2);
     this.group.add(head);
     this.head = head;
-    this.addHit(hitbox(0.19, 2.4, this, 'head'));
 
-    // patas con ruedas
+    /* ------------------------------------------------------------------ patas */
     this.wheels = [];
-    const legPos = [[-0.24, -0.26], [0.24, -0.26], [-0.24, 0.3], [0.24, 0.3]];
+    const legPos = [[-0.245, -0.28], [0.245, -0.28], [-0.245, 0.32], [0.245, 0.32]];
     for (const [x, z] of legPos) {
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.05), dark);
-      strut.position.set(x, 0.22, z);
-      this.group.add(strut);
+      const arm = new THREE.Mesh(RB(0.06, 0.24, 0.09, 0.015), dark);
+      arm.position.set(x, 0.24, z + (z < 0 ? 0.03 : -0.03));
+      arm.rotation.x = z < 0 ? -0.16 : 0.16;
+      this.group.add(arm);
+      const shock = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.16, 8), plate);
+      shock.position.set(x, 0.3, z + (z < 0 ? -0.06 : 0.06));
+      shock.rotation.x = z < 0 ? -0.5 : 0.5;
+      this.group.add(shock);
+
       const wheel = new THREE.Group();
-      wheel.position.set(x, 0.13, z);
-      const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.075, 14), dark);
+      wheel.position.set(x, 0.135, z);
+      const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.08, 16), rubber);
       tyre.rotation.z = Math.PI / 2;
       wheel.add(tyre);
-      const disc = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.014, 6, 14), accent);
-      disc.rotation.y = Math.PI / 2;
-      wheel.add(disc);
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.08, 8), body);
+      // tacos de la rueda
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        const lug = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.03, 0.05), dark);
+        lug.position.set(0, Math.cos(a) * 0.13, Math.sin(a) * 0.13);
+        lug.rotation.x = -a;
+        wheel.add(lug);
+      }
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.085, 12), plate);
+      rim.rotation.z = Math.PI / 2;
+      wheel.add(rim);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.1, 8), dark);
       hub.rotation.z = Math.PI / 2;
       wheel.add(hub);
+      const disc = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.012, 6, 16), accent);
+      disc.rotation.y = Math.PI / 2;
+      wheel.add(disc);
       this.group.add(wheel);
       this.wheels.push(wheel);
     }
+    this.addHit(hitbox(0.42, 1, this, 'body'));
+    this.addHit(hitbox(0.2, 2.4, this, 'head'));
 
-    // cola antena
-    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.02, 0.36, 6), dark);
-    tail.position.set(0, 0.52, 0.4);
-    tail.rotation.x = -0.7;
-    this.group.add(tail);
+    /* ------------------------------------------------------------- cola/antena */
+    add(new THREE.CylinderGeometry(0.014, 0.022, 0.36, 8), plate, 0, 0.56, 0.42, -0.62);
+    add(RB(0.02, 0.12, 0.1, 0.008), plate, 0, 0.72, 0.53, -0.3);
     const tip = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: TEX.glow, color: this.color, transparent: true, opacity: 0.85,
+      map: TEX.glow, color: this.color, transparent: true, opacity: 0.8,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    tip.position.set(0, 0.68, 0.55);
-    tip.scale.setScalar(0.3);
+    tip.position.set(0, 0.78, 0.57);
+    tip.scale.setScalar(0.22);
     this.group.add(tip);
 
-    this.muzzle.position.set(0, 0.34, -0.72);
+    // bocacha luminosa bajo el hocico
+    add(new THREE.CylinderGeometry(0.03, 0.035, 0.1, 10), dark, 0, 0.3, -0.62, Math.PI / 2);
+    add(new THREE.TorusGeometry(0.028, 0.007, 5, 10), accent, 0, 0.3, -0.67);
+
+    this.muzzle.position.set(0, 0.3, -0.68);
     this.charge.position.copy(this.muzzle.position);
     this.baseY = this.node.pos.y;
   }
@@ -588,97 +740,195 @@ export class Hound extends Enemy {
 // ------------------------------------------------------------------ centinela
 export class Sentry extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xa8b3c0, 1.0, 0.3));
-    const dark = this._mat(stdMat(0x6d7683, 0.95, 0.4));
+
+    // ---------------------------------------------------------------- mats
+    const armor = this._mat(stdMat(0xb9c4d1, 1.0, 0.24));   // aleación pulida
+    const plate = this._mat(stdMat(0x7e8996, 0.97, 0.42));  // chapa gastada
+    const dark = this._mat(stdMat(0x2e343c, 0.9, 0.55));    // mecanismos
+    const rubber = this._mat(stdMat(0x131619, 0.12, 0.94)); // botas y mangueras
     const accent = neonMat(this.color);
+    const lit = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x140a0e, emissive: this.color, emissiveIntensity: 2.4,
+      metalness: 0.45, roughness: 0.3, envMapIntensity: 1.4
+    }));
 
-    for (const s of [-1, 1]) {
-      // cadera -> muslo -> rodilla -> espinilla -> pie: una pierna articulada,
-      // no un palo con una caja de zapato
-      const hip = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 6), dark);
-      hip.position.set(s * 0.17, 0.86, 0);
-      this.group.add(hip);
-      const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.36, 0.17), body);
-      thigh.position.set(s * 0.17, 0.68, 0.01);
-      thigh.rotation.x = -0.12;
-      this.group.add(thigh);
-      const knee = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), dark);
-      knee.position.set(s * 0.17, 0.5, 0.045);
-      this.group.add(knee);
-      const shin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.34, 0.14), dark);
-      shin.position.set(s * 0.17, 0.32, 0.02);
-      shin.rotation.x = 0.1;
-      this.group.add(shin);
-      const piston = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.3, 6), accent);
-      piston.position.set(s * 0.17, 0.34, 0.11);
-      this.group.add(piston);
-      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.32), body);
-      boot.position.set(s * 0.17, 0.055, -0.05);
-      this.group.add(boot);
-      const toe = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.06, 0.1), dark);
-      toe.position.set(s * 0.17, 0.035, -0.2);
-      this.group.add(toe);
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = this.group) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      parent.add(m);
+      return m;
+    };
+    const RB = (w, h, d, r) => roundBox(w, h, d, r === undefined ? 0.03 : r);
+
+    /* ------------------------------------------------------------- piernas */
+    for (const sd of [-1, 1]) {
+      add(new THREE.SphereGeometry(0.095, 10, 8), dark, sd * 0.17, 0.9, 0);
+      add(RB(0.1, 0.14, 0.14, 0.02), plate, sd * 0.235, 0.9, 0);
+
+      add(RB(0.185, 0.4, 0.21, 0.045), armor, sd * 0.17, 0.69, 0.005, -0.09);
+      // placa exterior del muslo: dos capas, no una caja
+      const tp = add(RB(0.045, 0.28, 0.17, 0.014), plate, sd * 0.263, 0.7, 0.005, -0.09);
+      tp.rotation.z = sd * 0.05;
+      add(RB(0.17, 0.06, 0.19, 0.02), dark, sd * 0.17, 0.87, 0.0);
+
+      add(new THREE.SphereGeometry(0.078, 10, 8), dark, sd * 0.17, 0.49, 0.02);
+      add(RB(0.15, 0.14, 0.09, 0.03), plate, sd * 0.17, 0.49, -0.062, -0.18);
+
+      add(RB(0.155, 0.39, 0.18, 0.032), armor, sd * 0.17, 0.3, 0.015, 0.055);
+      add(RB(0.115, 0.3, 0.05, 0.02), plate, sd * 0.17, 0.32, -0.088, 0.05);
+      // pistón hidráulico visto por detrás de la espinilla
+      add(new THREE.CylinderGeometry(0.024, 0.024, 0.33, 8), dark, sd * 0.17, 0.32, 0.115, 0.07);
+      add(new THREE.CylinderGeometry(0.031, 0.031, 0.12, 8), plate, sd * 0.17, 0.22, 0.11, 0.07);
+      add(new THREE.SphereGeometry(0.058, 8, 6), dark, sd * 0.17, 0.12, 0.0);
+
+      add(RB(0.2, 0.12, 0.37, 0.03), rubber, sd * 0.17, 0.062, -0.035);
+      add(RB(0.19, 0.1, 0.24, 0.028), plate, sd * 0.17, 0.115, -0.09);
+      add(RB(0.16, 0.07, 0.09, 0.02), armor, sd * 0.17, 0.085, -0.235, 0.18);
+      // tacos de la suela
+      for (let k = 0; k < 4; k++) {
+        add(new THREE.BoxGeometry(0.2, 0.028, 0.04), dark, sd * 0.17, 0.014, -0.17 + k * 0.09);
+      }
+      // rodilleras con remaches
+      const rv = rivets(3, 0.05, 0.011, plate);
+      rv.position.set(sd * 0.17, 0.56, -0.085);
+      rv.rotation.x = -0.2;
+      this.group.add(rv);
     }
 
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.62, 0.3), body);
-    torso.position.set(0, 1.06, 0);
-    this.group.add(torso);
-    this.addHit(hitbox(0.46, 1, this, 'body', 1.05, 1.9));
+    /* ---------------------------------------------------------------- pelvis */
+    add(RB(0.43, 0.23, 0.29, 0.055), plate, 0, 0.95, 0);
+    add(RB(0.47, 0.08, 0.31, 0.02), dark, 0, 1.04, 0);
+    add(RB(0.17, 0.21, 0.09, 0.025), armor, 0, 0.87, -0.125, 0.16);
+    for (const sd of [-1, 1]) {
+      const skirt = add(RB(0.1, 0.24, 0.24, 0.02), plate, sd * 0.235, 0.9, 0.01);
+      skirt.rotation.z = sd * 0.16;
+    }
 
-    // radiador trasero + cuello: remates que rompen la silueta de caja
-    const rad = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.3, 0.06), dark);
-    rad.position.set(0, 1.12, 0.18);
+    /* ----------------------------------------------------------------- torso */
+    add(RB(0.35, 0.18, 0.25, 0.03), dark, 0, 1.1, 0);
+    add(RB(0.61, 0.5, 0.35, 0.07), armor, 0, 1.34, 0);
+    add(RB(0.51, 0.37, 0.09, 0.035), plate, 0, 1.36, -0.19, -0.05);
+    // segmentos abdominales, para que el torso no sea un bloque
+    for (let k = 0; k < 3; k++) {
+      add(RB(0.34 - k * 0.03, 0.05, 0.07, 0.012), dark, 0, 1.13 + k * 0.055, -0.16);
+    }
+    add(RB(0.35, 0.1, 0.31, 0.02), dark, 0, 1.585, 0);
+
+    // mochila: radiador, escapes y latiguillos al casco
+    add(RB(0.45, 0.45, 0.19, 0.045), dark, 0, 1.35, 0.245);
+    const rad = vent(0.32, 0.22, 5, dark, plate);
+    rad.position.set(0, 1.34, 0.347);
+    rad.rotation.y = Math.PI;
     this.group.add(rad);
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8), dark);
-    neck.position.set(0, 1.4, 0);
-    this.group.add(neck);
+    for (const sd of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.032, 0.035, 0.24, 8), plate, sd * 0.15, 1.6, 0.27);
+      add(new THREE.CylinderGeometry(0.026, 0.026, 0.02, 8), lit, sd * 0.15, 1.72, 0.27);
+      const h = hose(new THREE.Vector3(sd * 0.17, 1.56, 0.29), new THREE.Vector3(sd * 0.135, 1.66, 0.06), 0.017, rubber, 0.06);
+      this.group.add(h);
+    }
+    add(new THREE.CylinderGeometry(0.006, 0.006, 0.3, 4), plate, -0.2, 1.68, 0.24, 0.12);
 
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.06), accent);
-    chest.position.set(0, 1.12, -0.17);
-    this.group.add(chest);
+    // calca de unidad en el pecho (plano girado a -Z)
+    const tag = decal('stencil', 0.2, 0.1, { text: 'NEO-07', color: '#c9d2dc' });
+    tag.position.set(0.14, 1.43, -0.242);
+    tag.rotation.y = Math.PI;
+    tag.rotation.z = -0.04;
+    this.group.add(tag);
+    const warn = decal('hazard', 0.16, 0.05);
+    warn.position.set(-0.18, 1.19, -0.185);
+    warn.rotation.y = Math.PI;
+    this.group.add(warn);
 
-    // hombreras + brazo partido en hombro, codo y antebrazo
-    for (const s of [-1, 1]) {
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.36), dark);
-      pad.position.set(s * 0.38, 1.32, 0);
-      pad.rotation.z = s * 0.18;
-      this.group.add(pad);
-      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.26, 0.12), body);
-      upper.position.set(s * 0.41, 1.13, -0.03);
-      this.group.add(upper);
-      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), dark);
-      elbow.position.set(s * 0.41, 0.99, -0.05);
-      this.group.add(elbow);
-      const fore = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.24, 0.11), dark);
-      fore.position.set(s * 0.41, 0.86, -0.1);
-      fore.rotation.x = -0.32;
-      this.group.add(fore);
+    /* -------------------------------------------------------- hombros/brazos */
+    for (const sd of [-1, 1]) {
+      add(new THREE.SphereGeometry(0.088, 10, 8), dark, sd * 0.335, 1.47, 0);
+      const pad = add(RB(0.25, 0.21, 0.38, 0.055), armor, sd * 0.375, 1.5, 0);
+      pad.rotation.z = -sd * 0.17;
+      const rim = add(RB(0.255, 0.045, 0.39, 0.016), plate, sd * 0.375, 1.4, 0);
+      rim.rotation.z = -sd * 0.17;
+      const rv = rivets(3, 0.07, 0.012, plate, 'z');
+      rv.position.set(sd * 0.4, 1.585, 0);
+      rv.rotation.z = -sd * 0.17;
+      this.group.add(rv);
+
+      add(RB(0.135, 0.3, 0.155, 0.03), dark, sd * 0.4, 1.29, 0);
+      add(RB(0.055, 0.19, 0.17, 0.018), plate, sd * 0.472, 1.3, 0);
+      add(new THREE.SphereGeometry(0.062, 8, 6), dark, sd * 0.4, 1.12, 0);
+      add(RB(0.125, 0.29, 0.145, 0.03), armor, sd * 0.4, 0.97, -0.03, -0.24);
+      add(RB(0.05, 0.21, 0.12, 0.014), plate, sd * 0.462, 0.99, -0.035, -0.24);
+      add(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 8), dark, sd * 0.4, 0.82, -0.085, -0.24);
     }
 
-    // casco con visor
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.24, 0.26), body);
-    head.position.set(0, 1.52, 0);
-    this.group.add(head);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.03), neonMat(0xff2d55));
-    visor.position.set(0, 1.54, -0.135);
-    this.group.add(visor);
-    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.26, 4), dark);
-    antenna.position.set(0.09, 1.72, 0.02);
-    this.group.add(antenna);
-    this.addHit(hitbox(0.21, 3, this, 'head', 1.52));
+    // mano izquierda abierta (dedos sueltos, no un muñón)
+    add(RB(0.11, 0.13, 0.07, 0.02), dark, -0.4, 0.75, -0.1, -0.24);
+    for (let k = 0; k < 3; k++) {
+      add(new THREE.BoxGeometry(0.022, 0.075, 0.03), plate, -0.437 + k * 0.026, 0.69, -0.135, -0.5);
+    }
+    add(new THREE.BoxGeometry(0.026, 0.06, 0.03), plate, -0.345, 0.72, -0.11, -0.6, 0.5);
 
-    // fusil
+    /* ------------------------------------------------------------------ casco */
+    add(new THREE.CylinderGeometry(0.062, 0.075, 0.13, 10), dark, 0, 1.62, 0);
+    add(RB(0.3, 0.26, 0.3, 0.06), armor, 0, 1.76, 0);
+    add(RB(0.235, 0.11, 0.05, 0.018), dark, 0, 1.755, -0.155);
+    const visor = add(RB(0.2, 0.045, 0.022, 0.01), lit, 0, 1.762, -0.178);
+    const vglow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: TEX.glow, color: this.color, transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    vglow.scale.setScalar(0.42);
+    vglow.position.set(0, 1.762, -0.19);
+    this.group.add(vglow);
+    // ceja, carrilleras y mandíbula
+    add(RB(0.31, 0.06, 0.13, 0.022), plate, 0, 1.865, -0.11, 0.28);
+    for (const sd of [-1, 1]) {
+      add(RB(0.06, 0.17, 0.13, 0.02), plate, sd * 0.152, 1.72, -0.09);
+      add(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 8), plate, sd * 0.15, 1.78, -0.17, Math.PI / 2);
+    }
+    add(RB(0.2, 0.08, 0.21, 0.022), dark, 0, 1.64, -0.02);
+    add(new THREE.CylinderGeometry(0.007, 0.007, 0.24, 4), plate, 0.105, 1.94, 0.03, 0.16);
+    add(new THREE.SphereGeometry(0.012, 6, 4), lit, 0.115, 2.055, 0.05);
+    this.head = new THREE.Group();
+    this.head.position.set(0, 1.76, 0);
+    this.group.add(this.head);
+
+    this.addHit(hitbox(0.46, 1, this, 'body', 1.05, 1.9));
+    this.addHit(hitbox(0.22, 3, this, 'head', 1.76));
+
+    /* ------------------------------------------------------------------ fusil */
     const gun = new THREE.Group();
-    const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.1, 0.62), dark);
-    gun.add(gunBody);
-    const gunCore = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.4), accent);
-    gunCore.position.set(0, 0.06, -0.05);
-    gun.add(gunCore);
-    gun.position.set(0.18, 1.12, -0.3);
+    const gAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      gun.add(m);
+      return m;
+    };
+    gAdd(RB(0.1, 0.15, 0.42, 0.022), dark, 0, 0, -0.06);
+    gAdd(RB(0.115, 0.12, 0.24, 0.02), plate, 0, -0.005, -0.31, 0.03);
+    gAdd(RB(0.075, 0.1, 0.2, 0.02), dark, 0, -0.02, 0.22, 0.02);
+    gAdd(RB(0.06, 0.07, 0.16, 0.015), plate, 0, 0.02, 0.33);
+    gAdd(RB(0.07, 0.17, 0.1, 0.018), dark, 0, -0.15, 0.02, 0.22);
+    gAdd(new THREE.CylinderGeometry(0.021, 0.021, 0.3, 10), plate, 0, 0.005, -0.55, Math.PI / 2);
+    gAdd(new THREE.CylinderGeometry(0.034, 0.03, 0.16, 10), dark, 0, 0.005, -0.44, Math.PI / 2);
+    for (let k = 0; k < 4; k++) {
+      gAdd(new THREE.TorusGeometry(0.031, 0.006, 5, 10), lit, 0, 0.005, -0.46 - k * 0.038, Math.PI / 2);
+    }
+    gAdd(RB(0.06, 0.06, 0.16, 0.014), dark, 0, 0.105, -0.02);
+    gAdd(new THREE.CylinderGeometry(0.024, 0.024, 0.03, 10), lit, 0, 0.105, -0.11, Math.PI / 2);
+    gAdd(new THREE.CylinderGeometry(0.028, 0.03, 0.08, 10), dark, 0, 0.005, -0.71, Math.PI / 2);
+    gAdd(RB(0.09, 0.09, 0.07, 0.02), plate, 0, 0.005, -0.665);
+    // mano derecha cerrada sobre la empuñadura
+    gAdd(RB(0.1, 0.12, 0.09, 0.02), dark, 0, -0.12, 0.13, 0.15);
+    for (let k = 0; k < 3; k++) {
+      gAdd(new THREE.BoxGeometry(0.024, 0.05, 0.075), plate, -0.03 + k * 0.03, -0.09, 0.11, 0.5);
+    }
+    gun.position.set(0.2, 1.08, -0.3);
+    gun.rotation.x = 0.02;
     this.group.add(gun);
     this.gun = gun;
 
-    this.muzzle.position.set(0.18, 1.12, -0.68);
+    this.muzzle.position.set(0.2, 1.08, -0.78);
     this.charge.position.copy(this.muzzle.position);
   }
 
@@ -712,6 +962,8 @@ export class Boss extends Enemy {
     const trim = this._mat(new THREE.MeshBasicMaterial({ color: 0xffa63d, toneMapped: false }));
     const cool = this._mat(new THREE.MeshBasicMaterial({ color: 0x49e6ff, toneMapped: false }));
 
+    // cajas con canto biselado: el titán tenía aristas vivas de bloque de CAD
+    const rbox = (w, h, d, r = 0.04) => roundBox(w, h, d, r);
     const mk = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = null) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
@@ -726,30 +978,30 @@ export class Boss extends Enemy {
       leg.position.set(s * 1.02, 0, 0);
       this.group.add(leg);
 
-      mk(new THREE.BoxGeometry(0.78, 1.05, 0.86), dark, 0, 1.55, 0.05, 0, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.92, 0.34, 1.0), hull, 0, 2.02, 0.02, 0.12, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.68, 0.52, 0.76), hull, 0, 1.86, 0.16, -0.2, 0, 0, leg);
+      mk(rbox(0.78, 1.05, 0.86), dark, 0, 1.55, 0.05, 0, 0, 0, leg);
+      mk(rbox(0.92, 0.34, 1.0), hull, 0, 2.02, 0.02, 0.12, 0, 0, leg);
+      mk(rbox(0.68, 0.52, 0.76), hull, 0, 1.86, 0.16, -0.2, 0, 0, leg);
       mk(new THREE.CylinderGeometry(0.13, 0.13, 1.0, 8), steel, s * 0.42, 1.5, 0.42, 0.18, 0, 0, leg);
       mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, 0.92, 0.02);
       mk(new THREE.ConeGeometry(0.16, 0.52, 5), steel, 0, 0.92, -0.36, -Math.PI / 2.2, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.56, 1.0, 0.62), hull, 0, 0.45, 0.04, 0, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.7, 0.3, 0.7), plate, 0, 0.2, -0.02, 0, 0, 0, leg);
-      mk(new THREE.BoxGeometry(1.02, 0.3, 1.42), dark, 0, -0.28, -0.12, 0, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.86, 0.16, 0.4), steel, 0, -0.4, -0.74, 0.12, 0, 0, leg);
+      mk(rbox(0.56, 1.0, 0.62), hull, 0, 0.45, 0.04, 0, 0, 0, leg);
+      mk(rbox(0.7, 0.3, 0.7), plate, 0, 0.2, -0.02, 0, 0, 0, leg);
+      mk(rbox(1.02, 0.3, 1.42), dark, 0, -0.28, -0.12, 0, 0, 0, leg);
+      mk(rbox(0.86, 0.16, 0.4), steel, 0, -0.4, -0.74, 0.12, 0, 0, leg);
       for (let i = -1; i <= 1; i++) {
         mk(new THREE.ConeGeometry(0.1, 0.44, 5), steel, i * 0.3, -0.44, -0.98, -Math.PI / 2, 0, 0, leg);
       }
       mk(new THREE.TorusGeometry(0.2, 0.05, 6, 14), trim, 0, 0.9, 0.3, 0, 0, 0, leg);
-      mk(new THREE.BoxGeometry(0.07, 0.9, 0.07), accent, s * 0.37, 1.5, -0.36, 0, 0, 0, leg);
+      mk(rbox(0.07, 0.9, 0.07), accent, s * 0.37, 1.5, -0.36, 0, 0, 0, leg);
     }
 
     // ---------------------------------------------------------- cadera
-    mk(new THREE.BoxGeometry(2.0, 0.62, 1.18), dark, 0, 2.4, 0);
+    mk(rbox(2.0, 0.62, 1.18), dark, 0, 2.4, 0);
     for (const s of [-1, 1]) {
-      mk(new THREE.BoxGeometry(1.0, 0.78, 0.18), plate, s * 0.62, 2.02, -0.62, 0.3, 0, s * 0.06);
-      mk(new THREE.BoxGeometry(0.86, 0.56, 0.16), hull, s * 1.04, 2.12, 0.56, -0.2, s * 0.42, 0);
+      mk(rbox(1.0, 0.78, 0.18), plate, s * 0.62, 2.02, -0.62, 0.3, 0, s * 0.06);
+      mk(rbox(0.86, 0.56, 0.16), hull, s * 1.04, 2.12, 0.56, -0.2, s * 0.42, 0);
     }
-    mk(new THREE.BoxGeometry(0.42, 0.86, 0.16), trim, 0, 2.0, -0.66, 0.3, 0, 0);
+    mk(rbox(0.42, 0.86, 0.16), trim, 0, 2.0, -0.66, 0.3, 0, 0);
 
     // ---------------------------------------------------------- torso
     this.bust = new THREE.Group();
@@ -757,16 +1009,16 @@ export class Boss extends Enemy {
     this.group.add(this.bust);
     const bust = this.bust;
 
-    mk(new THREE.BoxGeometry(2.5, 1.5, 1.4), hull, 0, 0.3, 0, 0.06, 0, 0, bust);
-    mk(new THREE.BoxGeometry(2.16, 0.6, 1.18), dark, 0, 1.0, 0.18, -0.16, 0, 0, bust);
-    mk(new THREE.BoxGeometry(1.36, 1.0, 0.3), plate, 0, 0.34, -0.72, 0.02, 0, 0, bust);
+    mk(rbox(2.5, 1.5, 1.4), hull, 0, 0.3, 0, 0.06, 0, 0, bust);
+    mk(rbox(2.16, 0.6, 1.18), dark, 0, 1.0, 0.18, -0.16, 0, 0, bust);
+    mk(rbox(1.36, 1.0, 0.3), plate, 0, 0.34, -0.72, 0.02, 0, 0, bust);
     for (const s of [-1, 1]) {
-      mk(new THREE.BoxGeometry(0.56, 0.96, 0.26), dark, s * 0.96, 0.4, -0.6, 0, s * 0.28, 0, bust);
+      mk(rbox(0.56, 0.96, 0.26), dark, s * 0.96, 0.4, -0.6, 0, s * 0.28, 0, bust);
       for (let r = 0; r < 2; r++) {
         mk(new THREE.TorusGeometry(0.58 - r * 0.1, 0.05, 6, 16, Math.PI * 1.05), steel,
           s * 0.4, 0.52 - r * 0.36, -0.68, Math.PI / 2, 0, s * 0.55, bust);
       }
-      mk(new THREE.BoxGeometry(0.1, 1.2, 0.1), cool, s * 1.17, 0.34, -0.5, 0, 0, 0, bust);
+      mk(rbox(0.1, 1.2, 0.1), cool, s * 1.17, 0.34, -0.5, 0, 0, 0, bust);
       // omóplatos dentados
       mk(new THREE.ConeGeometry(0.16, 0.5, 5), plate, s * 0.8, 1.1, 0.55, Math.PI / 2.6, 0, s * 0.3, bust);
     }
@@ -785,7 +1037,7 @@ export class Boss extends Enemy {
     this._mat(this.core.material);
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
-      mk(new THREE.BoxGeometry(0.09, 1.16, 0.09), steel, Math.cos(a) * 0.72, cy, -0.84 + Math.sin(a) * 0.28, 0, 0, 0, bust);
+      mk(rbox(0.09, 1.16, 0.09), steel, Math.cos(a) * 0.72, cy, -0.84 + Math.sin(a) * 0.28, 0, 0, 0, bust);
     }
     this.halo = new THREE.Sprite(new THREE.SpriteMaterial({
       map: TEX.glow, color: 0xff2d55, transparent: true, opacity: 0.85,
@@ -802,16 +1054,16 @@ export class Boss extends Enemy {
     const head = new THREE.Group();
     head.position.set(0, 1.44, -0.1);
     bust.add(head);
-    mk(new THREE.BoxGeometry(0.88, 0.64, 0.88), hull, 0, 0, 0, 0, 0, 0, head);
-    mk(new THREE.BoxGeometry(0.68, 0.44, 0.52), dark, 0, -0.08, -0.54, 0.12, 0, 0, head);
-    mk(new THREE.BoxGeometry(0.62, 0.2, 0.18), steel, 0, 0.17, -0.52, 0, 0, 0, head);
-    mk(new THREE.BoxGeometry(0.62, 0.22, 0.48), plate, 0, -0.3, -0.44, 0.1, 0, 0, head);
+    mk(rbox(0.88, 0.64, 0.88), hull, 0, 0, 0, 0, 0, 0, head);
+    mk(rbox(0.68, 0.44, 0.52), dark, 0, -0.08, -0.54, 0.12, 0, 0, head);
+    mk(rbox(0.62, 0.2, 0.18), steel, 0, 0.17, -0.52, 0, 0, 0, head);
+    mk(rbox(0.62, 0.22, 0.48), plate, 0, -0.3, -0.44, 0.1, 0, 0, head);
     for (let i = -3; i <= 3; i++) {
       mk(new THREE.ConeGeometry(0.045, 0.2, 4), steel, i * 0.085, -0.16, -0.64, Math.PI, 0, 0, head);
       mk(new THREE.ConeGeometry(0.04, 0.16, 4), steel, i * 0.085, -0.36, -0.62, 0, 0, 0, head);
     }
     for (const s of [-1, 1]) {
-      mk(new THREE.BoxGeometry(0.24, 0.055, 0.07), accent, s * 0.2, 0.02, -0.46, 0, 0, s * 0.24, head);
+      mk(rbox(0.24, 0.055, 0.07), accent, s * 0.2, 0.02, -0.46, 0, 0, s * 0.24, head);
       mk(new THREE.SphereGeometry(0.05, 8, 8), trim, s * 0.31, 0.2, -0.44, 0, 0, 0, head);
       let hx = s * 0.38, hy = 0.3, hz = 0.1, rx = -0.5;
       for (let i = 0; i < 3; i++) {
@@ -835,9 +1087,9 @@ export class Boss extends Enemy {
       sh.position.set(s * 1.55, 0.94, 0.02);
       bust.add(sh);
       mk(new THREE.SphereGeometry(0.42, 14, 12), dark, 0, 0, 0, 0, 0, 0, sh);
-      mk(new THREE.BoxGeometry(1.12, 0.42, 1.06), plate, s * 0.12, 0.26, 0, 0, 0, s * 0.16, sh);
-      mk(new THREE.BoxGeometry(0.94, 0.34, 0.96), hull, s * 0.2, 0.56, 0.02, 0, 0, s * 0.26, sh);
-      mk(new THREE.BoxGeometry(0.72, 0.28, 0.8), dark, s * 0.26, 0.84, 0.04, 0, 0, s * 0.34, sh);
+      mk(rbox(1.12, 0.42, 1.06), plate, s * 0.12, 0.26, 0, 0, 0, s * 0.16, sh);
+      mk(rbox(0.94, 0.34, 0.96), hull, s * 0.2, 0.56, 0.02, 0, 0, s * 0.26, sh);
+      mk(rbox(0.72, 0.28, 0.8), dark, s * 0.26, 0.84, 0.04, 0, 0, s * 0.34, sh);
       for (let i = -1; i <= 1; i++) {
         mk(new THREE.ConeGeometry(0.11, 0.56 + Math.abs(i) * 0.1, 5), steel,
           s * (0.34 + i * 0.24), 1.02 - Math.abs(i) * 0.1, 0.2, -0.32, 0, s * 0.5, sh);
@@ -845,14 +1097,14 @@ export class Boss extends Enemy {
       const gun = new THREE.Group();
       gun.position.set(s * 0.08, 0.1, -0.6);
       sh.add(gun);
-      mk(new THREE.BoxGeometry(0.64, 0.52, 0.52), dark, 0, 0, 0.14, 0, 0, 0, gun);
+      mk(rbox(0.64, 0.52, 0.52), dark, 0, 0, 0.14, 0, 0, 0, gun);
       for (let b = -1; b <= 1; b++) {
         mk(new THREE.CylinderGeometry(0.1, 0.12, 1.4, 8), steel, b * 0.21, 0, -0.66, Math.PI / 2, 0, 0, gun);
         const ring = mk(new THREE.TorusGeometry(0.13, 0.03, 6, 12), accent, b * 0.21, 0, -1.32, 0, 0, 0, gun);
         this.cannons.push(ring);
       }
       for (let f = 0; f < 4; f++) {
-        mk(new THREE.BoxGeometry(0.04, 0.32, 0.52), steel, s * (0.32 + f * 0.06), 0.08, -0.26, 0, 0, 0, gun);
+        mk(rbox(0.04, 0.32, 0.52), steel, s * (0.32 + f * 0.06), 0.08, -0.26, 0, 0, 0, gun);
       }
     }
 
@@ -864,12 +1116,12 @@ export class Boss extends Enemy {
       bust.add(arm);
       mk(new THREE.CylinderGeometry(0.26, 0.32, 1.05, 10), hull, 0, -0.55, 0, 0, 0, s * 0.08, arm);
       mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, -1.12, 0.02, 0, 0, 0, arm);
-      mk(new THREE.BoxGeometry(0.6, 0.88, 0.64), dark, s * 0.06, -1.62, -0.04, 0.1, 0, 0, arm);
-      mk(new THREE.BoxGeometry(0.52, 0.42, 0.68), hull, s * 0.1, -1.98, -0.08, 0.1, 0, 0, arm);
+      mk(rbox(0.6, 0.88, 0.64), dark, s * 0.06, -1.62, -0.04, 0.1, 0, 0, arm);
+      mk(rbox(0.52, 0.42, 0.68), hull, s * 0.1, -1.98, -0.08, 0.1, 0, 0, arm);
       for (let c = -1; c <= 1; c++) {
         mk(new THREE.ConeGeometry(0.09, 0.58, 5), steel, s * 0.1 + c * 0.17, -2.36, -0.2, -0.38, c * 0.2, 0, arm);
       }
-      mk(new THREE.BoxGeometry(0.1, 0.72, 0.14), accent, s * 0.35, -1.58, 0.02, 0.1, 0, 0, arm);
+      mk(rbox(0.1, 0.72, 0.14), accent, s * 0.35, -1.58, 0.02, 0.1, 0, 0, arm);
       this.arms.push(arm);
     }
 
@@ -940,7 +1192,7 @@ export class Boss extends Enemy {
 
     // franjas encendidas en las costillas: leen la silueta a 30 m
     for (const y of [0.06, 0.86]) {
-      mk(new THREE.BoxGeometry(2.3, 0.07, 0.09), trim, 0, 3.72 + y, -1.14, 0, 0, 0);
+      mk(rbox(2.3, 0.07, 0.09), trim, 0, 3.72 + y, -1.14, 0, 0, 0);
     }
 
     // apoyo en el suelo: la caja real del titán baja varios metros del origen, así
@@ -1269,52 +1521,123 @@ export class BoltField {
 // ------------------------------------------------------------------ avispa
 export class Wasp extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xffc24a, 1.0, 0.26));
-    const dark = this._mat(stdMat(0xaab6c6, 0.9, 0.36));
+    // Avispa de reconocimiento: chasis de aleación oscura, no plástico amarillo.
+    const hull = this._mat(stdMat(0x8d97a5, 0.9, 0.34));
+    const plate = this._mat(stdMat(0x5c6572, 0.94, 0.46));
+    const dark = this._mat(stdMat(0x22272e, 0.86, 0.55));
+    const carbon = this._mat(stdMat(0x0d1013, 0.35, 0.6));
+    const accent = neonMat(this.color);
+    const lit = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x120a0d, emissive: this.color, emissiveIntensity: 2.4,
+      metalness: 0.4, roughness: 0.3
+    }));
 
-    const thorax = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.26, 4, 8), body);
-    thorax.rotation.x = Math.PI / 2;
-    this.group.add(thorax);
-    this.addHit(hitbox(0.32, 1.6, this, 'body'));
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      this.group.add(m);
+      return m;
+    };
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), body);
-    head.position.z = -0.2;
-    this.group.add(head);
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), neonMat(0xff2d55));
-    eye.position.set(0, 0.02, -0.29);
-    this.group.add(eye);
+    /* --- fuselaje segmentado (lee como insecto mecánico, no como cápsula) */
+    const segs = [
+      [0.115, 0.1, 0.0], [0.12, 0.12, 0.12], [0.105, 0.1, 0.24], [0.082, 0.08, 0.34]
+    ];
+    segs.forEach(([r, l, z], i) => {
+      add(new THREE.CapsuleGeometry(r, l, 4, 12), i === 0 ? hull : plate, 0, 0, z, Math.PI / 2);
+      // aros de unión entre segmentos
+      add(new THREE.TorusGeometry(r * 0.95, 0.011, 5, 14), dark, 0, 0, z + l * 0.5 + 0.01, Math.PI / 2);
+    });
+    add(roundBox(0.18, 0.055, 0.3, 0.02), dark, 0, 0.095, 0.12);   // lomo
+    add(roundBox(0.05, 0.03, 0.26, 0.01), plate, 0, 0.125, 0.12);
 
-    // alas de energía translúcidas: se leen como enjambre, no como dron
-    this.wings = [];
-    for (const s of [-1, 1]) {
-      const wing = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.16), new THREE.MeshBasicMaterial({
-        color: this.color, transparent: true, opacity: 0.16, side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
-      }));
-      wing.position.set(s * 0.26, 0.08, 0.02);
-      wing.rotation.z = s * -0.25;
-      this.group.add(wing);
-      this.wings.push(wing);
-      const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.012, 10), dark);
-      rotor.position.set(s * 0.26, 0.1, 0.02);
-      this.group.add(rotor);
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.18, 0.02), dark);
-      leg.position.set(s * 0.1, -0.14, 0.04);
-      leg.rotation.z = s * 0.35;
-      this.group.add(leg);
+    /* --- cabeza: sensor óptico en carcasa + halo */
+    const headG = new THREE.Group();
+    headG.position.set(0, -0.005, -0.24);
+    this.group.add(headG);
+    const hAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      headG.add(m);
+      return m;
+    };
+    hAdd(roundBox(0.23, 0.17, 0.2, 0.05), hull, 0, 0, 0);
+    hAdd(roundBox(0.19, 0.055, 0.06, 0.015), dark, 0, 0.055, -0.095);
+    hAdd(new THREE.CylinderGeometry(0.062, 0.075, 0.07, 14), dark, 0, -0.005, -0.115, Math.PI / 2);
+    hAdd(new THREE.SphereGeometry(0.052, 14, 10), lit, 0, -0.005, -0.145);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: TEX.glow, color: this.color, transparent: true, opacity: 0.75,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
+    halo.position.set(0, -0.005, -0.15);
+    halo.scale.setScalar(0.2);
+    headG.add(halo);
+    for (const sd of [-1, 1]) {  // mandíbulas
+      hAdd(roundBox(0.035, 0.05, 0.12, 0.012), plate, sd * 0.085, -0.06, -0.115, 0, sd * 0.22, 0);
+      hAdd(new THREE.ConeGeometry(0.018, 0.07, 6), dark, sd * 0.09, -0.085, -0.17, Math.PI * 0.62, 0, sd * 0.2);
+    }
+    hAdd(new THREE.CylinderGeometry(0.006, 0.004, 0.16, 5), plate, 0.055, 0.12, 0.02, -0.35);  // antena
+
+    /* --- patas de aterrizaje plegadas */
+    for (const sd of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        add(new THREE.SphereGeometry(0.028, 8, 6), dark, sd * 0.1, -0.075, -0.06 + i * 0.16);
+        add(new THREE.CylinderGeometry(0.014, 0.011, 0.13, 6), plate, sd * 0.135, -0.13, -0.06 + i * 0.16, 0, 0, sd * 0.7);
+        add(new THREE.CylinderGeometry(0.009, 0.007, 0.12, 6), dark, sd * 0.175, -0.2, -0.06 + i * 0.16, 0, 0, sd * -0.55);
+        add(roundBox(0.045, 0.014, 0.055, 0.006), carbon, sd * 0.2, -0.255, -0.06 + i * 0.16);
+      }
     }
 
-    const sting = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.035, 0.2, 6), neonMat(this.color));
-    sting.position.set(0, -0.03, 0.24);
-    sting.rotation.x = Math.PI / 2;
-    this.group.add(sting);
+    /* --- cuatro rotores en góndolas (alas de energía + palas reales) */
+    this.wings = [];
+    this.rotors = [];
+    for (const sd of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        const z = -0.1 + i * 0.26;
+        const arm = add(roundBox(0.24, 0.035, 0.05, 0.014), plate, sd * 0.16, 0.045, z, 0, 0, sd * 0.08);
+        arm.position.z = z;
+        const nac = add(new THREE.CylinderGeometry(0.048, 0.055, 0.1, 12), dark, sd * 0.265, 0.055, z);
+        add(new THREE.TorusGeometry(0.05, 0.008, 5, 14), accent, sd * 0.265, 0.105, z, Math.PI / 2);
+        const rotor = new THREE.Group();
+        rotor.position.set(sd * 0.265, 0.112, z);
+        for (let b = 0; b < 2; b++) {
+          const blade = new THREE.Mesh(roundBox(0.17, 0.006, 0.035, 0.003), carbon);
+          blade.rotation.y = b * Math.PI;
+          blade.rotation.z = 0.09;
+          rotor.add(blade);
+        }
+        this.group.add(rotor);
+        this.rotors.push(rotor);
+
+        const wing = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.13), new THREE.MeshBasicMaterial({
+          color: this.color, transparent: true, opacity: 0.13, side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+        }));
+        wing.position.set(sd * 0.265, 0.118, z);
+        this.group.add(wing);
+        this.wings.push(wing);
+      }
+    }
+
+    /* --- aguijón posterior con emisor */
+    add(new THREE.CylinderGeometry(0.012, 0.03, 0.16, 8), dark, 0, -0.01, 0.42, Math.PI / 2);
+    add(new THREE.CylinderGeometry(0.006, 0.012, 0.09, 6), lit, 0, -0.01, 0.52, Math.PI / 2);
     const tail = new THREE.Sprite(new THREE.SpriteMaterial({
       map: TEX.glow, color: this.color, transparent: true, opacity: 0.8,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    tail.position.set(0, -0.02, 0.34);
+    tail.position.set(0, -0.01, 0.56);
     tail.scale.setScalar(0.26);
     this.group.add(tail);
+
+    const tag = decal('stencil', 0.1, 0.05, { text: 'W-04', color: '#c9d2dc' });
+    tag.position.set(0.0, 0.06, 0.02);
+    tag.rotation.x = -Math.PI / 2;
+    this.group.add(tag);
+
+    this.addHit(hitbox(0.32, 1.6, this, 'body'));
 
     this.muzzle.position.set(0, 0, -0.3);
     this.charge.position.copy(this.muzzle.position);
@@ -1325,6 +1648,7 @@ export class Wasp extends Enemy {
     for (let i = 0; i < this.wings.length; i++) {
       this.wings[i].rotation.y = Math.sin(t * 42 + i * 1.7) * 0.5;
     }
+    if (this.rotors) for (let i = 0; i < this.rotors.length; i++) this.rotors[i].rotation.y += dt * 46;
     // enjambre: orbita rápido y bajo, con zigzag, para obligar a mover el punto de mira
     const p = this.getPlayer();
     const g = this.group.position;
@@ -1352,8 +1676,8 @@ export class Wasp extends Enemy {
 // ------------------------------------------------------------------ torreta de azotea
 export class Turret extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xdfe7f0, 1.0, 0.24));
-    const dark = this._mat(stdMat(0xe0a233, 0.95, 0.34));
+    const body = this._mat(stdMat(0x94a0af, 0.95, 0.34));
+    const dark = this._mat(stdMat(0x2b3138, 0.9, 0.52));
     const accent = neonMat(this.color);
 
     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.52, 0.22, 8), dark);
@@ -1548,45 +1872,86 @@ export class Sniper extends Enemy {
 // ------------------------------------------------------------------ araña suicida
 export class Crawler extends Enemy {
   _build() {
-    const body = this._mat(stdMat(0xe0a233, 1.0, 0.28));
-    const dark = this._mat(stdMat(0xaab6c6, 0.9, 0.4));
+    // Escarabajo explosivo: caparazón de placas de aleación sobre bastidor.
+    const plate = this._mat(stdMat(0x77808c, 0.92, 0.42));
+    const hull = this._mat(stdMat(0x9aa4b1, 0.95, 0.32));
+    const dark = this._mat(stdMat(0x23282f, 0.88, 0.55));
+    const carbon = this._mat(stdMat(0x0e1114, 0.3, 0.62));
     const accent = neonMat(this.color);
+    const lit = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x140a06, emissive: 0xff9f43, emissiveIntensity: 2.6,
+      metalness: 0.35, roughness: 0.28
+    }));
 
-    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), body);
-    shell.scale.set(1, 0.62, 1.15);
-    shell.position.y = 0.26;
-    this.group.add(shell);
-    this.addHit(hitbox(0.34, 1.2, this, 'body'));
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = this.group) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      parent.add(m);
+      return m;
+    };
 
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), neonMat(0xff9f43));
-    this.core.position.set(0, 0.3, -0.06);
-    this.group.add(this.core);
-    const ringCore = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.02, 6, 14), accent);
+    /* --- chasis bajo + placas del lomo solapadas */
+    add(roundBox(0.46, 0.12, 0.62, 0.05), dark, 0, 0.15, 0);
+    for (let i = 0; i < 3; i++) {
+      const w = 0.5 - i * 0.055;
+      const p = add(roundBox(w, 0.1, 0.22, 0.04), i === 1 ? hull : plate, 0, 0.235 + i * 0.03, -0.2 + i * 0.19, -0.1 + i * 0.05);
+      p.scale.z = 1.02;
+      add(roundBox(w - 0.06, 0.03, 0.19, 0.012), dark, 0, 0.29 + i * 0.03, -0.2 + i * 0.19, -0.1 + i * 0.05);
+    }
+    add(roundBox(0.34, 0.06, 0.2, 0.02), plate, 0, 0.135, 0.3, 0.12);   // faldón trasero
+
+    /* --- núcleo de detonación a la vista, tras rejilla */
+    this.core = add(new THREE.SphereGeometry(0.1, 14, 12), lit, 0, 0.27, -0.02);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: TEX.glow, color: this.color, transparent: true, opacity: 0.8,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
+    glow.position.set(0, 0.27, -0.02);
+    glow.scale.setScalar(0.34);
+    this.group.add(glow);
+    const cage = new THREE.Group();
+    cage.position.set(0, 0.27, -0.02);
+    for (let i = 0; i < 4; i++) {
+      const bar = new THREE.Mesh(roundBox(0.19, 0.016, 0.016, 0.006), dark);
+      bar.rotation.y = i * Math.PI / 4;
+      cage.add(bar);
+    }
+    const ringCore = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.016, 6, 18), accent);
     ringCore.rotation.x = Math.PI / 2;
-    ringCore.position.set(0, 0.3, -0.06);
-    this.group.add(ringCore);
+    cage.add(ringCore);
+    this.group.add(cage);
 
+    /* --- seis patas hidráulicas con rodilla y almohadilla */
     this.legs = [];
-    for (const s of [-1, 1]) {
+    for (const sd of [-1, 1]) {
       for (let i = 0; i < 3; i++) {
+        const z = -0.22 + i * 0.22;
         const leg = new THREE.Group();
-        const upper = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.3, 0.035), dark);
-        upper.position.set(s * 0.2, 0.22, -0.18 + i * 0.18);
-        upper.rotation.z = s * 0.8;
-        leg.add(upper);
-        const lower = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.24, 0.03), body);
-        lower.position.set(s * 0.38, 0.1, -0.18 + i * 0.18);
-        lower.rotation.z = s * -0.5;
-        leg.add(lower);
+        leg.position.set(sd * 0.22, 0.2, z);
+        add(new THREE.SphereGeometry(0.042, 10, 8), dark, 0, 0, 0, 0, 0, 0, leg);
+        add(roundBox(0.2, 0.045, 0.05, 0.018), plate, sd * 0.1, 0.025, 0, 0, 0, sd * -0.3, leg);
+        add(new THREE.SphereGeometry(0.03, 8, 6), dark, sd * 0.2, -0.01, 0, 0, 0, 0, leg);
+        add(new THREE.CylinderGeometry(0.014, 0.012, 0.22, 6), hull, sd * 0.235, -0.11, 0, 0, 0, sd * 0.22, leg);
+        add(new THREE.CylinderGeometry(0.008, 0.007, 0.18, 5), dark, sd * 0.2, -0.1, 0.03, 0.2, 0, sd * 0.12, leg);
+        add(roundBox(0.07, 0.022, 0.09, 0.01), carbon, sd * 0.26, -0.215, 0, 0, 0, 0, leg);
+        add(new THREE.CylinderGeometry(0.006, 0.006, 0.05, 4), accent, sd * 0.26, -0.198, 0.04, 0, 0, 0, leg);
         this.group.add(leg);
         this.legs.push(leg);
       }
     }
 
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 6), dark);
-    spike.position.set(0, 0.44, 0.16);
-    spike.rotation.x = 0.5;
-    this.group.add(spike);
+    /* --- morro con sensor y pinchos de carga */
+    add(roundBox(0.3, 0.14, 0.12, 0.04), hull, 0, 0.19, -0.32);
+    add(new THREE.CylinderGeometry(0.028, 0.036, 0.04, 12), dark, 0, 0.2, -0.38, Math.PI / 2);
+    add(new THREE.SphereGeometry(0.024, 10, 8), lit, 0, 0.2, -0.395);
+    add(new THREE.ConeGeometry(0.045, 0.16, 8), plate, 0, 0.33, 0.12, -0.35);
+    const tag = decal('hazard', 0.12, 0.04);
+    tag.position.set(0, 0.28, 0.28);
+    tag.rotation.x = -1.15;
+    this.group.add(tag);
+
+    this.addHit(hitbox(0.34, 1.2, this, 'body'));
 
     this.muzzle.position.set(0, 0.28, -0.3);
     this.charge.position.copy(this.muzzle.position);
