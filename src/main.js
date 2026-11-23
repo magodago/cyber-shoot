@@ -1479,6 +1479,10 @@ function showOverlay(title, sub, btn, fn, extra, altLabel, altFn) {
   const ov = $('#overlay');
   if (!ov) return;
   ov.style.display = 'flex';
+  // En escritorio el ratón está capturado por la calle: el cursor no existe y
+  // el botón no se puede pulsar (y disparar apuntando al panel no sirve porque
+  // el overlay lo tapa). Se suelta el puntero para que el botón sea un botón.
+  if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
   ov.classList.remove('cover');
   $('#ov-title').textContent = title;
   $('#ov-sub').textContent = sub || '';
@@ -1513,6 +1517,8 @@ function initDesktop() {
   const el = renderer.domElement;
   el.addEventListener('click', () => {
     if (S.mode === 'boot') return;
+    // pantalla final: manda el botón del overlay, no el gatillo
+    if (S.mode === 'dead') return;
     if (S.mode === 'story') { story.skip(); return; }
     if (document.pointerLockElement !== el) { el.requestPointerLock(); return; }
     weapon.fire('R');
@@ -1537,6 +1543,10 @@ function initDesktop() {
     // carteles: cualquier tecla de acción los pasa sin esperar
     if (S.mode === 'story' && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.code === 'KeyF' || e.code === 'KeyE')) {
       e.preventDefault(); story.skip(); return;
+    }
+    if (S.mode === 'dead' && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter')) {
+      const b = $('#ov-btn');
+      if (b && typeof b.onclick === 'function') { e.preventDefault(); b.onclick(); return; }
     }
     if (e.code === 'KeyR') { weapon.reload('L', true); weapon.reload('R', true); }
     if (e.code === 'KeyA' || e.code === 'ArrowLeft') input.left = true;
