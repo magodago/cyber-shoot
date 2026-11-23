@@ -47,17 +47,18 @@ const HIT_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, dep
 // `y` y `sy` permiten llevar la caja al cuerpo real: los humanoides tienen el
 // origen en los pies, así que una esfera centrada en 0 les pasaba por las
 // piernas y los disparos al torso no registraban.
-function hitbox(r, mult, enemy, kind, y = 0, sy = 1) {
+function hitbox(r, mult, enemy, kind, y = 0, sy = 1, z = 0) {
   // Holtura global: los volúmenes de impacto se inflan un 25% para que el tiro
   // se sienta justo. Con el radio "real" el jugador ve pasar balas por encima
   // del hombro del enemigo sin que cuente.
   const PAD = 1.25;
   const m = new THREE.Mesh(HIT_GEO, HIT_MAT);
   m.scale.set(r * PAD, r * sy * PAD, r * PAD);
-  m.position.y = y;
+  m.position.set(0, y, z);
   m.userData.enemy = enemy;
   m.userData.mult = mult;
   m.userData.part = kind;
+  m.userData.isHit = true;
   m.userData.sharedGeo = true;
   return m;
 }
@@ -155,11 +156,33 @@ export class Enemy {
 
   addHit(mesh) {
     mesh.userData.enemy = this;
+    mesh.userData.isHit = true;
     this.hitMeshes.push(mesh);
     // el hitbox debe colgar del grupo o su matrixWorld queda en el origen
     // y ningún disparo lejano impacta
     if (!mesh.parent) this.group.add(mesh);
     return mesh;
+  }
+
+  // Silueta real del enemigo, como respaldo de las cajas de impacto. Las cajas
+  // son elipsoides invisibles: cubren el torso, pero no los brazos abiertos,
+  // las patas, los alerones ni la cabeza de un cuadrúpedo (que va delante y
+  // arriba del origen). Ahí el jugador ve cuerpo y el disparo se perdía. Si el
+  // rayo entra en una malla visible, cuenta como impacto de cuerpo.
+  bodyMeshes() {
+    if (!this._bodyMeshes) {
+      const out = [];
+      this.group.traverse((o) => {
+        if (!o.isMesh || !o.geometry || o.userData.isHit) return;
+        const m = o.material;
+        if (!m || m.blending === THREE.AdditiveBlending) return;
+        if (m.transparent && (m.opacity === undefined ? 1 : m.opacity) < 0.12) return;
+        o.userData.enemy = this;
+        out.push(o);
+      });
+      this._bodyMeshes = out;
+    }
+    return this._bodyMeshes;
   }
 
   getPlayer() { return this.world.getPlayerPos(); }
@@ -686,8 +709,10 @@ export class Hound extends Enemy {
       this.group.add(wheel);
       this.wheels.push(wheel);
     }
-    this.addHit(hitbox(0.42, 1, this, 'body'));
-    this.addHit(hitbox(0.2, 2.4, this, 'head'));
+    // chasis y testa reales: el K-9 tiene el origen en el suelo, así que las
+    // cajas centradas en 0 le pasaban por las ruedas y la cabeza nunca recibía
+    this.addHit(hitbox(0.4, 1, this, 'body', 0.37, 1.3, 0.02));
+    this.addHit(hitbox(0.24, 2.4, this, 'head', 0.4, 1, -0.5));
 
     /* ------------------------------------------------------------- cola/antena */
     add(new THREE.CylinderGeometry(0.014, 0.022, 0.36, 8), plate, 0, 0.56, 0.42, -0.62);

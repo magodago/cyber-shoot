@@ -1,0 +1,102 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>hit test</title>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js", "three/addons/": "../vendor/jsm/" } }
+</script>
+</head><body><pre id="out">running…</pre>
+<script type="module">
+import * as THREE from 'three';
+import { ENEMY_DEFS } from '../src/enemies.js';
+
+const out = [];
+const log = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n'); };
+
+const scene = new THREE.Scene();
+const world = {
+  scene, enemies: [], level: 1,
+  playerVel: new THREE.Vector3(),
+  getPlayerPos: () => new THREE.Vector3(0, 1.6, 0),
+  bolts: { spawn() {} }, fx: null, audio: null,
+  onHit() {}, onDeath() {}, damagePlayer() {}, shake() {},
+};
+
+const ray = new THREE.Raycaster();
+function cast(origin, dir, objs) {
+  if (!objs.length) return [];
+  ray.set(origin, dir); ray.near = 0.25; ray.far = 120;
+  return ray.intersectObjects(objs, false);
+}
+
+// vértices reales de la malla visible = exactamente "dentro del cuerpo"
+function samplePts(meshes, maxPerMesh = 90) {
+  const pts = [];
+  const v = new THREE.Vector3();
+  for (const m of meshes) {
+    const pos = m.geometry && m.geometry.attributes && m.geometry.attributes.position;
+    if (!pos) continue;
+    const step = Math.max(1, Math.floor(pos.count / maxPerMesh));
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+      pts.push(v.clone());
+    }
+  }
+  return pts;
+}
+
+const origin = new THREE.Vector3(0, 1.6, 0);
+const rows = [];
+
+for (const kind of Object.keys(ENEMY_DEFS)) {
+  const def = ENEMY_DEFS[kind];
+  if (kind === 'boss') continue;
+  const e = new def.Class(world, { pos: new THREE.Vector3(0, def.air ? 2.5 : 0, -9), dir: new THREE.Vector3(0, 0, 1) }, def);
+  e.state = 'idle'; e.st = 99;
+  e.group.scale.setScalar(e.scaleBase);
+  e.group.updateMatrixWorld(true);
+
+  const hitMeshes = e.hitMeshes.slice();
+  const body = e.bodyMeshes().filter((m) => m.visible !== false);
+  const objs = hitMeshes.concat(body);
+  const pts = samplePts(body);
+
+  let onlyBox = 0, sil = 0, none = 0;
+  for (const p of pts) {
+    const dir = p.clone().sub(origin).normalize();
+    const a = cast(origin, dir, hitMeshes).length;
+    const b = cast(origin, dir, objs).length;
+    if (a > 0) onlyBox++; else if (b > 0) sil++; else none++;
+  }
+  rows.push({ kind, pts: pts.length, onlyBox, sil, none });
+  log(`${kind.padEnd(8)} mallas=${String(body.length).padStart(3)} vertices=${String(pts.length).padStart(4)} soloCaja=${String(onlyBox).padStart(4)} soloSilueta=${String(sil).padStart(4)} fallos=${String(none).padStart(4)}`);
+}
+
+const tp = rows.reduce((s, r) => s + r.pts, 0);
+const ts = rows.reduce((s, r) => s + r.sil, 0);
+const tf = rows.reduce((s, r) => s + r.none, 0);
+log(`\nTOTAL vertices=${tp} recuperadosPorSilueta=${ts} fallos=${tf} (${(100 * tf / tp).toFixed(2)}%)`);
+
+// Antes/después en el K-9: cajas viejas centradas en el origen vs cajas nuevas
+const hound = new ENEMY_DEFS.hound.Class(world, { pos: new THREE.Vector3(0, 0, -9), dir: new THREE.Vector3(0, 0, 1) }, ENEMY_DEFS.hound);
+hound.state = 'idle'; hound.st = 99; hound.group.scale.setScalar(hound.scaleBase); hound.group.updateMatrixWorld(true);
+const hb = hound.bodyMeshes().filter((m) => m.visible !== false);
+const hpts = samplePts(hb, 200);
+
+const oldBoxes = new THREE.Group();
+const tmpMat = new THREE.MeshBasicMaterial({ visible: false });
+for (const [r, y] of [[0.42, 0], [0.2, 0]]) {
+  const g = new THREE.SphereGeometry(r * 1.25, 12, 8);
+  const m = new THREE.Mesh(g, tmpMat);
+  m.position.y = y;
+  m.userData.isHit = true;
+  oldBoxes.add(m);
+}
+oldBoxes.position.copy(hound.group.position);
+oldBoxes.updateMatrixWorld(true);
+
+const before = hpts.filter((p) => cast(origin, p.clone().sub(origin).normalize(), oldBoxes.children).length > 0).length;
+const afterBoxes = hpts.filter((p) => cast(origin, p.clone().sub(origin).normalize(), hound.hitMeshes).length > 0).length;
+const afterAll = hpts.filter((p) => cast(origin, p.clone().sub(origin).normalize(), hound.hitMeshes.concat(hb)).length > 0).length;
+log(`K-9 (${hpts.length} vertices del cuerpo): cajasViejas=${before} cajasNuevas=${afterBoxes} cajas+silueta=${afterAll}`);
+
+window.__DONE = true;
+</script></body></html>

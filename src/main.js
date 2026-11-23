@@ -190,6 +190,24 @@ function damagePlayer(dmg) {
   }
 }
 
+function silhouetteHits() {
+  // Respaldo por silueta: el rayo contra las mallas visibles del enemigo. Una
+  // caja elipsoide no cubre brazos, patas, alerones ni la cabeza del K-9, así
+  // que apuntando al cuerpo el tiro no contaba. Aquí vale cualquier punto
+  // dentro de lo que el jugador ve.
+  const bodies = [];
+  for (let i = 0; i < enemies.length; i++) {
+    const e = enemies[i];
+    if (!e || e.dead || !e.bodyMeshes) continue;
+    const list = e.bodyMeshes();
+    for (let j = 0; j < list.length; j++) {
+      if (list[j].visible !== false) bodies.push(list[j]);
+    }
+  }
+  if (!bodies.length) return [];
+  return ray.intersectObjects(bodies, false);
+}
+
 function hitTest(origin, dir, hand) {
   // tienda / fin: los disparos eligen tarjetas
   if (panel.active) {
@@ -207,14 +225,14 @@ function hitTest(origin, dir, hand) {
     if (!e || e.dead || !e.hitMeshes) continue;
     for (let j = 0; j < e.hitMeshes.length; j++) objs.push(e.hitMeshes[j]);
   }
-  if (!objs.length) return null;
 
-  const hits = ray.intersectObjects(objs, false);
-  if (!hits.length) {
-    // Manga ancha: si el rayo pasa cerca del enemigo, cuenta como impacto.
-    // Antes sólo se aplicaba en VR y en pantalla el tiro se perdía por un píxel.
-    return assistShot(origin, dir);
-  }
+  let hits = objs.length ? ray.intersectObjects(objs, false) : [];
+  // 1) cajas de impacto: dan multiplicador por zona (cabeza x2.4)
+  // 2) si ninguna caja se cruza, manda la silueta visible
+  // 3) último recurso: manga ancha angular
+  if (!hits.length) hits = silhouetteHits();
+  hits = hits.filter((h) => h.object.userData.enemy && !h.object.userData.enemy.dead);
+  if (!hits.length) return assistShot(origin, dir);
 
   const pierce = 1 + (weapon.upgrades.pierce || 0);
   const dmgBase = weapon.damage;
@@ -248,35 +266,45 @@ function hitTest(origin, dir, hand) {
 }
 
 function assistShot(origin, dir) {
-  // Asistencia de puntería: engancha si el rayo pasa cerca del blanco.
-  // Se ajustó a la baja en la build 21 y se pasó de estricta (1.3° / 30 cm):
-  // con el arma en la mano cuesta horrores dar a nada en movimiento. Ahora
-  // ~2.6° de error angular y 55 cm de desvío máximo, con 10 cm de holgura.
-  const ANG = 0.045;      // rad ≈ 2.6°
-  const MAXOFF = 0.55;    // m de desvío máximo a cualquier distancia
+  // Asistencia de puntería: engancha si el rayo pasa cerca del cuerpo.
+  // El radio del volumen cuenta entero (un humanoide alto o un titán son mucho
+  // más anchos que la esfera de su centro) y se suma holgura angular + fija.
+  const ANG = 0.05;       // rad ≈ 2.9° de tolerancia angular
+  const MAXOFF = 0.8;     // m de desvío máximo a cualquier distancia
+  const SLACK = 0.22;     // m de holgura alrededor del volumen real
   const v = new THREE.Vector3();
+  const sc = new THREE.Vector3();
   let best = null;
-  let bestT = Infinity;
+  let bestScore = -Infinity;
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (!e || e.dead || !e.hitMeshes || !e.hitMeshes.length) continue;
     for (let j = 0; j < e.hitMeshes.length; j++) {
-      e.hitMeshes[j].getWorldPosition(v);
+      const box = e.hitMeshes[j];
+      box.getWorldPosition(v);
+      box.getWorldScale(sc);
+      const r = Math.max(sc.x, sc.y, sc.z);
       v.sub(origin);
       const t = v.dot(dir);
       if (t < 2.5 || t > 110) continue;
-      const rad = Math.min(MAXOFF, t * ANG) + 0.05;
       const off = v.addScaledVector(dir, -t).length();
+      const rad = r + Math.min(MAXOFF, t * ANG) + SLACK;
       if (off > rad) continue;
-      if (t < bestT) { bestT = t; best = { e, point: origin.clone().addScaledVector(dir, t) }; }
-      break;
+      // mejor centrado relativo al tamaño: un titán lejano no le roba el tiro
+      // a un dron que está justo bajo la mira
+      const score = (rad - off) / rad;
+      if (score > bestScore) {
+        bestScore = score;
+        best = { e, t, mult: box.userData.mult || 1 };
+      }
     }
   }
   if (!best) return null;
-  const falloff = bestT < 14 ? 1.4 : bestT < 26 ? 1.15 : 1;
+  const point = origin.clone().addScaledVector(dir, best.t);
+  const falloff = best.t < 14 ? 1.4 : best.t < 26 ? 1.15 : 1;
   const dmg = weapon.damage * falloff;
-  best.e.hit(best.point, 1, dmg);
-  return { point: best.point, enemy: best.e, crit: false, dmg };
+  best.e.hit(point, best.mult, dmg);
+  return { point, enemy: best.e, crit: best.mult > 1.6, dmg };
 }
 
 function onShot(hand, h, res) {
