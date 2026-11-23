@@ -9,7 +9,7 @@ import { GameAudio } from './audio.js?v=19';
 import { WeaponSystem } from './weapon.js?v=21';
 import { makeEnemy, BoltField } from './enemies.js?v=19';
 import { Music } from './music.js?v=19';
-import { createCover } from './cover.js?v=19';
+import { createCover } from './cover.js?v=27';
 import { createStory } from './story.js?v=19';
 import { initAssets, skinWeapons } from './assets.js?v=3';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -1517,6 +1517,8 @@ function initDesktop() {
   const el = renderer.domElement;
   el.addEventListener('click', () => {
     if (S.mode === 'boot') return;
+    // portada: el único botón es la placa 3D (pointerdown), no el gatillo
+    if (S.mode === 'cover') return;
     // pantalla final: manda el botón del overlay, no el gatillo
     if (S.mode === 'dead') return;
     if (S.mode === 'story') { story.skip(); return; }
@@ -1776,6 +1778,12 @@ function boot() {
 // Un único botón: entra en VR si el navegador lo permite y, si no, juega en pantalla.
 async function onPlay() {
   audio.init(); audio.resume(); music.start();
+  // Captura del ratón en el mismo gesto del click (escritorio): si se pide más
+  // tarde, el navegador ya no lo considera gesto de usuario y la partida se
+  // quedaba sin poder apuntar hasta un segundo click.
+  if (!renderer.xr.isPresenting && window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
+    try { renderer.domElement.requestPointerLock(); } catch (e) { /* sin captura */ }
+  }
   if (navigator.xr && navigator.xr.requestSession) {
     try {
       const session = await navigator.xr.requestSession('immersive-vr', {

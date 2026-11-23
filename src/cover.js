@@ -104,6 +104,15 @@ export function createCover(scene, opts = {}) {
     new THREE.MeshBasicMaterial({ map: btnTex, transparent: true, toneMapped: false })
   );
   btn.add(plate);
+  // Zona de pulsación generosa: la placa se ve pequeña en pantalla y el click
+  // tenía que caer justo en el texto. Este plano invisible amplía el blanco
+  // sin cambiar el dibujo.
+  const hit = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.6, 1.35),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false, toneMapped: false })
+  );
+  hit.position.z = 0.01;
+  btn.add(hit);
   const btnGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: radialTexture(), color: 0x49e6ff, transparent: true, opacity: 0.5,
     blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
