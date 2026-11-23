@@ -1445,11 +1445,10 @@ function showCover() {
   $('#ov-title').textContent = '';
   $('#ov-sub').textContent = '';
   $('#ov-extra').innerHTML = '';
+  // No DOM button on cover: the 3D plaque is the only JUGAR button
   const b = $('#ov-btn');
-  b.textContent = 'JUGAR';
-  b.onclick = onPlay;
+  b.style.display = 'none';
   document.getElementById('hud').style.opacity = '0';
-  b.style.display = 'block';
   const b2 = $('#ov-btn2');
   if (b2) b2.style.display = 'none';
 }
@@ -1668,6 +1667,22 @@ function boot() {
   initXR();
   renderer.setAnimationLoop(frame);
   showCover();
+  // 3D plaque click on desktop (VR uses trigger)
+  const coverRay = new THREE.Raycaster();
+  const coverPtr = new THREE.Vector2();
+  renderer.domElement.addEventListener('pointerdown', (ev) => {
+    if (renderer.xr.isPresenting) return;
+    if (!cover || !cover.button) return;
+    if (S.mode !== 'playing' && document.body.classList.contains('on-cover')) {
+      coverPtr.set(
+        (ev.clientX / window.innerWidth) * 2 - 1,
+        -(ev.clientY / window.innerHeight) * 2 + 1
+      );
+      coverRay.setFromCamera(coverPtr, camera);
+      const hits = coverRay.intersectObject(cover.button, true);
+      if (hits.length) onPlay();
+    }
+  });
   // Sonda de pruebas: con ?debug expone el estado del juego para poder
   // comprobarlo desde fuera (nivel, enemigos, jefe, modo, armas).
   if (new URLSearchParams(location.search).has('debug')) {
