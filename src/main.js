@@ -55,7 +55,10 @@ const LEVELS = 6;   // 5 sectores de campaña + el del jefe titán
 
 /* ------------------------------------------------------------------ escena */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+// La resolución nativa con bloom es el mayor coste fijo de fotograma (tirones en
+// el visor y en portátiles sin GPU). Se arranca en 1.5 y el bucle baja o sube
+// el escalón según el tiempo real de fotograma (ver autoQuality).
+renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -109,8 +112,11 @@ const audio = new GameAudio();
 const fx = new FX(scene);
 const music = new Music(audio);
 const arena = new Arena(scene);
-// prototipo proto-assets: props escaneados + HDRI real (si falla, se juega igual)
-initAssets({ renderer, scene, arena }).catch((e) => console.warn('[assets]', e));
+// prototipo proto-assets: props escaneados + HDRI real (si falla, se juega igual).
+// Guardamos la promesa: la primera oleada espera a que esté todo cargado, porque
+// entrar a mitad de partida provocaba subidas de texturas y compilación de
+// shaders (los "tirones de vez en cuando").
+const assetsReady = initAssets({ renderer, scene, arena }).catch((e) => console.warn('[assets]', e));
 const bolts = new BoltField(scene);
 
 const enemies = [];
@@ -1158,6 +1164,8 @@ function frame(time, xrFrame) {
 
 function frameBody(time, xrFrame) {
   const dt = Math.min(0.05, clock.getDelta());
+  autoQuality(dt);
+  stepPrewarm();
   t += dt;
   S.frames = (S.frames | 0) + 1;   // latido: sirve para saber si el bucle vive
 
@@ -1654,8 +1662,17 @@ function startCampaign() {
   // también sirve, porque la URL es la misma). Sin atajo, campaña normal.
   const q = new URLSearchParams(location.search);
   const start = Math.max(1, Math.min(LEVELS, parseInt(q.get('level') || '1', 10) || 1));
-  if (start > 1) { weapon.enabled = true; startLevel(start); }
-  else playStory(STORY_INTRO, () => startLevel(1));
+  const begin = () => {
+    if (start > 1) { weapon.enabled = true; startLevel(start); }
+    else playStory(STORY_INTRO, () => startLevel(1));
+  };
+  // Los props y el HDRI cargan en segundo plano: si entran en escena con la
+  // partida ya en marcha, hay subida de texturas y tirón. Se esperan (máximo
+  // 7 s) y se precompilan los shaders de enemigos antes de la primera oleada.
+  let done = false;
+  const go = () => { if (done) return; done = true; prewarmShaders(); begin(); };
+  assetsReady.then(go, go);
+  setTimeout(go, 7000);
 }
 
 /* ------------------------------------------------------------------ arranque */
@@ -1694,6 +1711,7 @@ function boot() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
+    applyQuality(quality.i);   // no volver a resolución nativa al redimensionar
   });
 
   // Vigilante del visor: en el navegador del visor/móvil el contexto WebGL a
@@ -1739,11 +1757,78 @@ async function onPlay() {
       const session = await navigator.xr.requestSession('immersive-vr', {
         optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
       });
+      // En el visor el bloom está apagado, pero el framebuffer a resolución
+      // nativa sigue pesando: 0.9 mantiene nitidez y libera margen de fotograma.
+      try { renderer.xr.setFramebufferScaleFactor(0.9); } catch (e) { /* nada */ }
       renderer.xr.setSession(session);
       return;                       // sessionstart arranca la campaña
     } catch (err) { /* sin visor disponible: seguimos en pantalla */ }
   }
   startCampaign();
+}
+
+/* ------------------------------------------- calidad adaptativa y precalentado
+   Los tirones tenían dos causas medibles: props/HDRI entrando en escena con la
+   partida en marcha, y el primer enemigo de cada tipo compilando su shader en
+   mitad de la oleada (congelación de 100-300 ms). Aquí se resuelven las dos. */
+const QUALITY_STEPS = [1.5, 1.25, 1.0, 0.8];
+const quality = { i: 0, acc: 0, n: 0, hold: 0 };
+
+function applyQuality(i) {
+  quality.i = Math.max(0, Math.min(QUALITY_STEPS.length - 1, i));
+  const pr = Math.min(QUALITY_STEPS[quality.i], window.devicePixelRatio || 1);
+  renderer.setPixelRatio(pr);
+  if (typeof composer !== 'undefined' && composer) composer.setPixelRatio(pr);
+  quality.acc = 0; quality.n = 0;
+}
+
+function autoQuality(dt) {
+  if (renderer.xr.isPresenting) return;      // en el visor manda el navegador
+  quality.acc += dt; quality.n++;
+  if (quality.hold > 0) quality.hold -= dt;
+  if (quality.n < 90) return;                // ~1,5 s de muestra
+  const avg = quality.acc / quality.n;
+  quality.acc = 0; quality.n = 0;
+  if (avg > 0.024 && quality.i < QUALITY_STEPS.length - 1) {
+    applyQuality(quality.i + 1);             // por debajo de ~40 fps: baja
+    quality.hold = 4;
+  } else if (avg < 0.0125 && quality.i > 0 && quality.hold <= 0) {
+    applyQuality(quality.i - 1);             // va sobrado: recupera nitidez
+    quality.hold = 4;
+  }
+}
+
+// Un ejemplar de cada enemigo, fuera de la vista y bajo el suelo, para que sus
+// materiales y programas queden compilados antes de la primera oleada. Se hace
+// UN TIPO POR FOTOGRAMA: compilar los ocho de golpe congelaba la imagen más de
+// un segundo en el visor (medido en el navegador de pruebas). Va durante la
+// pantalla de historia, así que el coste no se ve.
+const WARM_KINDS = ['drone', 'wasp', 'hound', 'crawler', 'sentry', 'turret', 'sniper', 'boss'];
+const warmQueue = [];
+let prewarmQueued = false;
+const warmLog = [];
+
+function prewarmShaders() {
+  if (prewarmQueued) return;
+  prewarmQueued = true;
+  for (const k of WARM_KINDS) warmQueue.push(k);
+}
+
+function stepPrewarm() {
+  if (!warmQueue.length) return;
+  const kind = warmQueue.shift();
+  const spot = new THREE.Vector3(0, -260, -12);
+  const t0 = performance.now();
+  let e = null, ok = false;
+  try {
+    e = makeEnemy(world, { pos: spot.clone(), dir: new THREE.Vector3(0, 0, -1), kind: 'ground' }, kind, 500);
+    e.group.position.copy(spot);
+    e.group.updateMatrixWorld(true);
+    renderer.compile(scene, camera);
+    ok = true;
+  } catch (err) { /* un tipo que falle no puede impedir jugar */ }
+  if (e) { try { scene.remove(e.group); } catch (err) { /* nada */ } }
+  warmLog.push({ kind, ok, ms: Math.round(performance.now() - t0) });
 }
 
 /* bloom solo en pantalla: en VR cuesta frames */
@@ -1757,4 +1842,4 @@ composer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
 boot();
 
 /* depuración: consola del navegador */
-window.__CS = () => ({ S, enemies, waves, arena, weapon, scene, camera, world, bolts, startLevel, hitTest, ray, panel, restartRun, closeShop, buy, travel: () => travel, player: () => PLAYER.clone(), story, playStory });
+window.__CS = () => ({ S, enemies, waves, arena, weapon, scene, camera, world, bolts, startLevel, hitTest, ray, panel, restartRun, closeShop, buy, travel: () => travel, player: () => PLAYER.clone(), story, playStory, prewarmShaders, stepPrewarm, applyQuality, autoQuality, quality, warmQueue, warmLog, startCampaign, onPlay, assetsReady: () => assetsReady });
