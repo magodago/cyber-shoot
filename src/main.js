@@ -53,6 +53,11 @@ const S = {
 
 const LEVELS = 6;   // 5 sectores de campaña + el del jefe titán
 
+// Navegador dentro del visor (Quest Browser, Pico, Wolvic…). Allí compilar un
+// shader bloquea el hilo principal segundos: cualquier precalentado se salta.
+const HEADSET_BROWSER = /OculusBrowser|Quest|Pico|Wolvic|VRBrowser|Vive Focus/i.test(navigator.userAgent || '');
+
+
 /* ------------------------------------------------------------------ escena */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 // La resolución con bloom es el mayor coste fijo de fotograma: a 1.5 en una
@@ -390,8 +395,11 @@ class Panel {
   }
 
   place() {
-    const p = camera.getWorldPosition(new THREE.Vector3());
-    const q = camera.getWorldQuaternion(new THREE.Quaternion());
+    // En el visor la cámara buena es la de XR (la de la cabeza, en su sitio):
+    // con la cámara de pantalla el panel se colocaba detrás del jugador.
+    const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+    const p = cam.getWorldPosition(new THREE.Vector3());
+    const q = cam.getWorldQuaternion(new THREE.Quaternion());
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
     fwd.y *= 0.35;
     fwd.normalize();
@@ -1597,6 +1605,7 @@ function initDesktop() {
 
 function initXR() {
   renderer.xr.addEventListener('sessionstart', () => {
+    warmQueue.length = 0;          // ni un compile con la sesión VR abierta
     hideOverlay();
     worldHud.sp.visible = true;
     yaw = 0; pitch = 0;
@@ -1762,6 +1771,9 @@ function boot() {
   }
 
   window.addEventListener('resize', () => {
+    // Con la sesión XR abierta el tamaño lo manda la capa del visor: tocar aquí
+    // setSize/setPixelRatio rompe el framebuffer y la imagen se queda en negro.
+    if (renderer.xr.isPresenting) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1836,6 +1848,9 @@ const QUALITY_STEPS = [1.25, 1.05, 0.9, 0.75];
 const quality = { i: 0, acc: 0, n: 0, hold: 0, spikes: 0 };
 
 function applyQuality(i) {
+  // En el visor no se toca nada: la resolución la fija la capa XR y un
+  // setPixelRatio/setSize a media sesión deja la imagen negra.
+  if (renderer.xr.isPresenting) return;
   quality.i = Math.max(0, Math.min(QUALITY_STEPS.length - 1, i));
   const pr = Math.min(QUALITY_STEPS[quality.i], window.devicePixelRatio || 1);
   renderer.setPixelRatio(pr);
@@ -1883,12 +1898,19 @@ function prewarmShaders() {
 
 function stepPrewarm() {
   if (!warmQueue.length) return;
+  // Nunca dentro del visor: compilar con la sesión XR abierta congela el
+  // fotograma y la sesión no llega a arrancar (fallo de la build 28). Y en el
+  // navegador del visor tampoco, ni antes de entrar: allí un compile de la
+  // escena entera cuesta segundos y deja la página clavada.
+  if (renderer.xr.isPresenting || HEADSET_BROWSER) { warmQueue.length = 0; return; }
   // Fuera de la partida sí; con el jugador disparando, NO. Compilar un tipo
   // cuesta una congelación de 100-300 ms y era justo el tirón que se notaba al
   // empezar cada nivel. En la portada y en los carteles de texto el tirón no
   // se ve; en partida, sí.
   if (S.mode === 'playing') return;
-  const batch = S.mode === 'cover' || S.mode === 'boot' ? 3 : 1;
+  // Uno por fotograma: tres compilaban la escena entera de golpe y el arranque
+  // se quedaba en un parón de un segundo.
+  const batch = 1;
   for (let b = 0; b < batch && warmQueue.length; b++) {
     const kind = warmQueue.shift();
     const spot = new THREE.Vector3(0, -260, -12);
