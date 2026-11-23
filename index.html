@@ -10,7 +10,7 @@
    vieja aunque el push estuviera hecho. Aqui el propio HTML se compara con
    version.json (sin cache) y si no coincide se recarga una vez con sello. */
 (function () {
-  var BUILD = 30;
+  var BUILD = 31;
   if (window.__cbb) return;
   fetch('./version.json?_=' + Date.now(), { cache: 'no-store' })
     .then(function (r) { return r.json(); })
@@ -124,6 +124,8 @@
   #overlay.cover .card{background:none;border:0;box-shadow:none;padding:0;width:min(300px,78vw)}
   #overlay.cover .kicker,#overlay.cover #ov-title,
   #overlay.cover #ov-sub,#overlay.cover #ov-extra{display:none}
+  #buildtag{position:fixed;left:10px;bottom:8px;z-index:40;font-size:11px;letter-spacing:.08em;
+    color:rgba(255,255,255,.34);pointer-events:none;font-weight:700}
   #overlay.cover #ov-btn{box-shadow:0 0 0 1px rgba(73,230,255,.55),0 18px 60px rgba(73,230,255,.4);
     animation:coverPulse 2.6s ease-in-out infinite}
   #overlay.cover #ov-btn2{display:none!important}
@@ -163,6 +165,7 @@
   </div>
 
   <div id="hitflash"></div>
+  <div id="buildtag">v31</div>
 
   <div id="overlay" class="cover">
     <div class="card">
@@ -185,6 +188,6 @@
       window.__err = 'promise: ' + (e.reason && e.reason.message || e.reason);
     });
   </script>
-  <script type="module" src="./src/main.js?v=27"></script>
+  <script type="module" src="./src/main.js?v=31"></script>
 </body>
 </html>

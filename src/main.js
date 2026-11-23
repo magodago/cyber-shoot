@@ -1814,6 +1814,22 @@ function boot() {
     clock.getDelta();
     renderer.setAnimationLoop(frame);
   });
+
+  // Sello de diagnóstico en la esquina: qué build corre y si este navegador
+  // expone WebXR. Sin él, un fallo silencioso en el visor es indistinguible de
+  // estar viendo una versión cacheada.
+  const tag = document.getElementById('buildtag');
+  if (tag) {
+    if (!navigator.xr) {
+      tag.textContent = 'v31 · sin xr';
+    } else {
+      navigator.xr.isSessionSupported('immersive-vr').then((ok) => {
+        tag.textContent = 'v31 · ' + (ok ? 'vr lista' : 'vr no soportada');
+      }).catch((e) => {
+        tag.textContent = 'v31 · vr ' + ((e && e.name) || 'error');
+      });
+    }
+  }
 }
 
 // Un único botón: entra en VR si el navegador lo permite y, si no, juega en pantalla.
@@ -1822,8 +1838,34 @@ function boot() {
 // en el visor eso consume el gesto (activación transitoria) y requestSession
 // rechazaba en silencio, con lo que el juego caía a pantalla plana.
 async function onPlay() {
+  // En el visor, cualquier caída a plano tiene que explicarse en pantalla; en el
+  // portátil no se muestra cartel, que allí no hay visor y solo estorbaría.
+  const explain = HEADSET_BROWSER || /[?&]vr\b/.test(location.search);
+  function flat(why) {
+    if (explain) {
+      showOverlay(
+        'VR NO DISPONIBLE',
+        why + ' · build 31 — se abre en pantalla.',
+        'JUGAR EN PANTALLA',
+        () => startCampaign()
+      );
+    } else {
+      // Captura del ratón en el mismo gesto del clic (escritorio): si se pide más
+      // tarde, el navegador ya no lo considera gesto de usuario y la partida se
+      // quedaba sin poder apuntar hasta un segundo click.
+      if (!renderer.xr.isPresenting && window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
+        try { renderer.domElement.requestPointerLock(); } catch (e) { /* sin captura */ }
+      }
+      startCampaign();
+    }
+  }
   let lastErr = null;
-  if (navigator.xr && navigator.xr.requestSession) {
+  if (!navigator.xr || !navigator.xr.requestSession) {
+    audio.init(); audio.resume(); music.start();
+    flat('este navegador no expone WebXR');
+    return;
+  }
+  {
     // Petición lanzada en el mismo tick del clic (requisito de activación) y el
     // audio se inicializa justo después, sin esperar a la respuesta: crear el
     // AudioContext fuera del gesto lo dejaba suspendido y sin sonido.
@@ -1861,20 +1903,9 @@ async function onPlay() {
     // Ningún intento salió: se juega en pantalla, pero diciendo POR QUÉ. Sin este
     // cartel el fallo era indistinguible de «no hay visor» y no había forma de
     // diagnosticarlo desde dentro del visor.
-    if (lastErr) {
-      const why = (lastErr.name || 'Error') + (lastErr.message ? ': ' + lastErr.message : '');
-      showOverlay('VR NO DISPONIBLE', why + ' — se abre en pantalla.', 'JUGAR EN PANTALLA', () => startCampaign());
-      return;
-    }
+    flat(lastErr ? ((lastErr.name || 'Error') + (lastErr.message ? ': ' + lastErr.message : '')) : 'sin respuesta del visor');
+    return;
   }
-  audio.init(); audio.resume(); music.start();
-  // Captura del ratón en el mismo gesto del click (escritorio): si se pide más
-  // tarde, el navegador ya no lo considera gesto de usuario y la partida se
-  // quedaba sin poder apuntar hasta un segundo click.
-  if (!renderer.xr.isPresenting && window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
-    try { renderer.domElement.requestPointerLock(); } catch (e) { /* sin captura */ }
-  }
-  startCampaign();
 }
 
 /* ------------------------------------------- calidad adaptativa y precalentado
