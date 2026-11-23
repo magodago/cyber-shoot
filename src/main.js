@@ -1817,25 +1817,62 @@ function boot() {
 }
 
 // Un único botón: entra en VR si el navegador lo permite y, si no, juega en pantalla.
+// ORDEN IMPORTANTE: la sesión XR se pide LO PRIMERO, todavía dentro del gesto del
+// clic. Antes se inicializaba el audio y se capturaba el ratón antes de pedirla;
+// en el visor eso consume el gesto (activación transitoria) y requestSession
+// rechazaba en silencio, con lo que el juego caía a pantalla plana.
 async function onPlay() {
+  let lastErr = null;
+  if (navigator.xr && navigator.xr.requestSession) {
+    // Petición lanzada en el mismo tick del clic (requisito de activación) y el
+    // audio se inicializa justo después, sin esperar a la respuesta: crear el
+    // AudioContext fuera del gesto lo dejaba suspendido y sin sonido.
+    let pending = null;
+    try {
+      pending = navigator.xr.requestSession('immersive-vr', {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+      });
+    } catch (e) { lastErr = e; }
+    audio.init(); audio.resume(); music.start();
+    if (pending) {
+      try {
+        const session = await pending;
+        // En el visor el bloom está apagado, pero el framebuffer a resolución
+        // nativa sigue pesando: 0.9 mantiene nitidez y libera margen de fotograma.
+        try { renderer.xr.setFramebufferScaleFactor(0.9); } catch (e) { /* nada */ }
+        renderer.xr.setSession(session);
+        return;                     // sessionstart arranca la campaña
+      } catch (err) {
+        lastErr = err;
+        console.warn('[CS] immersive-vr rechazado', err && err.name, err && err.message);
+      }
+    }
+    // Un reintento desnudo, sin ninguna característica opcional: si el rechazo
+    // venía de 'layers'/'hand-tracking', este pasa.
+    try {
+      const session = await navigator.xr.requestSession('immersive-vr');
+      try { renderer.xr.setFramebufferScaleFactor(0.9); } catch (e) { /* nada */ }
+      renderer.xr.setSession(session);
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.warn('[CS] immersive-vr rechazado (mínimo)', err && err.name, err && err.message);
+    }
+    // Ningún intento salió: se juega en pantalla, pero diciendo POR QUÉ. Sin este
+    // cartel el fallo era indistinguible de «no hay visor» y no había forma de
+    // diagnosticarlo desde dentro del visor.
+    if (lastErr) {
+      const why = (lastErr.name || 'Error') + (lastErr.message ? ': ' + lastErr.message : '');
+      showOverlay('VR NO DISPONIBLE', why + ' — se abre en pantalla.', 'JUGAR EN PANTALLA', () => startCampaign());
+      return;
+    }
+  }
   audio.init(); audio.resume(); music.start();
   // Captura del ratón en el mismo gesto del click (escritorio): si se pide más
   // tarde, el navegador ya no lo considera gesto de usuario y la partida se
   // quedaba sin poder apuntar hasta un segundo click.
   if (!renderer.xr.isPresenting && window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
     try { renderer.domElement.requestPointerLock(); } catch (e) { /* sin captura */ }
-  }
-  if (navigator.xr && navigator.xr.requestSession) {
-    try {
-      const session = await navigator.xr.requestSession('immersive-vr', {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
-      });
-      // En el visor el bloom está apagado, pero el framebuffer a resolución
-      // nativa sigue pesando: 0.9 mantiene nitidez y libera margen de fotograma.
-      try { renderer.xr.setFramebufferScaleFactor(0.9); } catch (e) { /* nada */ }
-      renderer.xr.setSession(session);
-      return;                       // sessionstart arranca la campaña
-    } catch (err) { /* sin visor disponible: seguimos en pantalla */ }
   }
   startCampaign();
 }
