@@ -880,10 +880,10 @@ function updateBossApproach(dt) {
   const b = S.boss;
   if (!b || b.dead || S.mode !== 'playing') return;
   if (b.state === 'spawn') return;            // aún saliendo de la calzada
-  // Cada fase que pierde lo hace enfadar: aprieta el paso. A 0,24 u/s tarda
-  // ~90 s en cruzar la calle: tiempo de sobra para vaciar cargadores, pero
-  // con la horda encima y sin cobertura no es un paseo.
-  const speed = 0.24 + Math.max(0, (b.phase || 1) - 1) * 0.10;
+  // Cada fase que pierde lo hace enfadar: aprieta el paso. A 0,40 u/s cruza
+  // la calle en algo menos de un minuto: hay que hacer daño de verdad, no
+  // pasarse el cargador contra la coraza.
+  const speed = 0.40 + Math.max(0, (b.phase || 1) - 1) * 0.12;
   S.bossDist = Math.max(BOSS_NEAR, S.bossDist - dt * speed);
   b.node.pos.z = PLAYER.z - S.bossDist;
   if (S.bossDist <= BOSS_NEAR) gameOver('EL TITÁN TE ALCANZÓ');
@@ -1309,6 +1309,20 @@ function updateHud(force) {
       bb.style.opacity = '1';
       const f = $('#boss-fill');
       if (f) f.style.width = clamp(S.boss.hp / S.boss.maxHp, 0, 1) * 100 + '%';
+      const bt = $('#boss-t');
+      if (bt) {
+        const b = S.boss;
+        if (b.invulnT > 0) {
+          bt.textContent = 'CORAZA REARMÁNDOSE — NO ENTRA DAÑO';
+          bt.style.color = '#49e6ff';
+        } else if (b.coreOpen) {
+          bt.textContent = 'NÚCLEO EXPUESTO — DISPARA AHÍ';
+          bt.style.color = '#ffe066';
+        } else {
+          bt.textContent = 'CORAZA ACTIVA — BUSCA EL NÚCLEO CUANDO RECARGUE';
+          bt.style.color = '';
+        }
+      }
     } else bb.style.opacity = '0';
   }
 

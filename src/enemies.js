@@ -977,6 +977,76 @@ export class Boss extends Enemy {
     super(world, node, def);
     this.phase = 1;
     this.summoned = [false, false];
+    // Blindaje del titán: el pecho es chapa, no papel. Las zonas de impacto
+    // siguen siendo las mismas, pero el daño se reinterpreta aquí: solo el
+    // núcleo, y solo mientras está expuesto, paga de verdad.
+    this.coreOpen = false;
+    this.ventT = 0;      // segundos que le quedan al núcleo abierto
+    this.invulnT = 0;    // blindaje corto al cambiar de fase
+  }
+
+  // Ametrallar el pecho ya no es la solución: la coraza se come el daño y
+  // devuelve chispas. El premio está en la cabeza y en el núcleo abierto.
+  hit(point, mult, dmg) {
+    if (this.state === 'die' || this.dead) return false;
+    if (this.invulnT > 0) {
+      if (this.world.fx) this.world.fx.spark(point, 0x49e6ff, 6, 3.4, 0.2, 0.07);
+      return false;
+    }
+    let m;
+    if (mult === 2.6) m = this.coreOpen ? 3.4 : 0.06;  // núcleo: solo paga abierto
+    else if (mult > 1) m = 1.9;                        // cabeza: premio a la puntería
+    else m = 0.35;                                     // cuerpo, brazos, piernas
+    if (m < 1 && this.world.fx) this.world.fx.spark(point, 0xc8d2dc, 4, 2.6, 0.16, 0.06);
+    return super.hit(point, m, dmg);
+  }
+
+  _coolT() {
+    const base = this.def.cool || 2.4;
+    return base * (this.phase >= 3 ? 0.62 : this.phase === 2 ? 0.8 : 1);
+  }
+
+  _openVent(sec) {
+    this.ventT = sec;
+    this.coreOpen = true;
+    if (this.world.fx) {
+      const p = this.core ? this.core.getWorldPosition(new THREE.Vector3()) : this.group.position.clone();
+      this.world.fx.ring(p, 0xffe066, 1.6, 0.45);
+    }
+  }
+
+  _closeVent() {
+    if (this.coreOpen && this.world.fx) {
+      const p = this.core ? this.core.getWorldPosition(new THREE.Vector3()) : this.group.position.clone();
+      this.world.fx.ring(p, 0x49e6ff, 1.1, 0.3);
+    }
+    this.ventT = 0;
+    this.coreOpen = false;
+  }
+
+  _ventTick(dt, t) {
+    this.invulnT = Math.max(0, this.invulnT - dt);
+    if (this.ventT > 0) {
+      this.ventT = Math.max(0, this.ventT - dt);
+      if (this.ventT === 0) this._closeVent();
+    }
+    const open = this.ventT > 0;
+    const shielded = this.invulnT > 0;
+    const col = open ? 0xffe066 : shielded ? 0x49e6ff : 0x7a1024;
+    if (this.core) {
+      this.core.material.color.setHex(col);
+      if (open) this.core.scale.setScalar(1.3 + Math.sin(t * 16) * 0.2);
+    }
+    if (this.halo) {
+      this.halo.material.color.setHex(col);
+      this.halo.material.opacity = open ? 0.95 : shielded ? 0.7 : 0.4;
+      if (open) this.halo.scale.setScalar(4.4 + Math.sin(t * 13) * 0.5);
+    }
+    if (this.coreLight) {
+      this.coreLight.color.setHex(col);
+      if (open) this.coreLight.intensity = 190 + Math.sin(t * 15) * 55;
+      else if (shielded) this.coreLight.intensity = 130 + Math.sin(t * 8) * 30;
+    }
   }
 
   _build() {
@@ -1105,8 +1175,8 @@ export class Boss extends Enemy {
     for (let i = 0; i < 3; i++) {
       mk(new THREE.ConeGeometry(0.1, 0.38, 4), dark, 0, 0.34, 0.24 + i * 0.16, -0.32, 0, 0, head);
     }
-    this.addHit(hitbox(0.58, 1.8, this, 'head', 4.16, 1.0));
-    this.bodyHit = this.addHit(hitbox(1.42, 1.0, this, 'body', 3.0, 1.25));
+    this.addHit(hitbox(0.58, 2.8, this, 'head', 4.16, 1.0));
+    this.bodyHit = this.addHit(hitbox(1.42, 0.35, this, 'body', 3.0, 1.25));
     this.coreHit = this.addHit(hitbox(0.52, 2.6, this, 'core', 3.14));
 
     // ---------------------------------------------------------- hombros y cañones
@@ -1313,6 +1383,13 @@ export class Boss extends Enemy {
     this.aimTime = Math.max(0.7, this.aimTime * 0.85);
     this.burstCount = p === 2 ? 5 : 6;
     this.spreadNow = 1.5;
+    // Al romperse la coraza se rearma: 1,1 s en los que no entra daño. Evita
+    // que un cargador guardado para el cambio de fase se salte una entera.
+    this.state = 'cool';
+    this.st = 0;
+    this.invulnT = 1.1;
+    this._closeVent();
+    this.ventT = 0;
     if (this.world.fx) {
       const p3 = this.group.position.clone().add(new THREE.Vector3(0, 2.4, 0));
       this.world.fx.ring(p3, 0xff9f43, 4.5, 0.9);
@@ -1382,6 +1459,7 @@ export class Boss extends Enemy {
   _ai(dt, t) {
     this._move(dt, t);
     this._radial(dt);
+    this._ventTick(dt, t);
     const aimT = this.aimTime;
     if (this.state === 'aim') {
       this.charge.material.opacity = Math.min(1, this.st / aimT) * 0.9;
@@ -1397,7 +1475,7 @@ export class Boss extends Enemy {
       this.burstT -= dt;
       if (this.burstT <= 0 && this.burstLeft > 0) {
         this.burstLeft--;
-        this.burstT = this.def.burstGap;
+        this.burstT = (this.def.burstGap || 0.18) * (this.phase >= 3 ? 0.7 : this.phase === 2 ? 0.85 : 1);
         const base = this.getPlayer().clone();
         const spread = this.spreadNow || this.def.spread;
         for (let k = -1; k <= 1; k += 2) {
@@ -1411,9 +1489,14 @@ export class Boss extends Enemy {
         }
         if (this.world.audio && this.world.audio.shot) this.world.audio.shot();
       }
-      if (this.burstLeft <= 0) { this.state = 'cool'; this.st = 0; }
+      // Al vaciar la ráfaga recarga: ahí se abre el núcleo y el titán es carne.
+      if (this.burstLeft <= 0) {
+        this.state = 'cool';
+        this.st = 0;
+        this._openVent(Math.min(1.6, this._coolT() * 0.7));
+      }
     } else if (this.state === 'cool') {
-      if (this.st >= this.def.cool) { this.state = 'aim'; this.st = 0; }
+      if (this.st >= this._coolT()) { this.state = 'aim'; this.st = 0; this._closeVent(); }
     }
   }
 
