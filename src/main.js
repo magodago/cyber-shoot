@@ -55,10 +55,11 @@ const LEVELS = 6;   // 5 sectores de campaña + el del jefe titán
 
 /* ------------------------------------------------------------------ escena */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-// La resolución nativa con bloom es el mayor coste fijo de fotograma (tirones en
-// el visor y en portátiles sin GPU). Se arranca en 1.5 y el bucle baja o sube
-// el escalón según el tiempo real de fotograma (ver autoQuality).
-renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
+// La resolución con bloom es el mayor coste fijo de fotograma: a 1.5 en una
+// pantalla de 2560 px son ~10 millones de píxeles por fotograma solo para el
+// jugador. Se arranca en 1.25 (nitidez de sobra) y el bucle sube o baja el
+// escalón según el tiempo real (ver autoQuality).
+renderer.setPixelRatio(Math.min(1.25, window.devicePixelRatio || 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -218,7 +219,14 @@ function hitTest(origin, dir, hand) {
   // tienda / fin: los disparos eligen tarjetas
   if (panel.active) {
     const hit = panel.raycast(origin, dir);
-    return hit ? { point: hit.point, panel: hit } : null;
+    // En el visor apuntar a un botón de 40 cm con el arma es una lotería.
+    // Cualquier tiro sobre la tarjeta que no acierte un botón hace el botón
+    // grande; y si el tiro pasa cerca, también, salvo en el primer segundo
+    // (para que el gatillo del último enemigo no se coma la pantalla).
+    const fresh = performance.now() - panel.shownAt < 1200;
+    if (hit) return { point: hit.point, panel: hit.target ? hit : { point: hit.point, target: panel.primary() } };
+    if (fresh || !panel.primary()) return null;
+    return { point: origin.clone().addScaledVector(dir, 2.35), panel: { target: panel.primary() } };
   }
 
   ray.set(origin, dir);
@@ -351,6 +359,7 @@ class Panel {
     this.active = false;
     this.mode = 'shop';
     this.rects = [];
+    this.shownAt = 0;
     this.flash = 0;
     this.flashMsg = '';
     this.pulse = 0;
@@ -359,10 +368,19 @@ class Panel {
   show(mode) {
     this.mode = mode;
     this.active = true;
+    this.shownAt = performance.now();
     this.group.visible = true;
     this.mesh.visible = true;
     this.place();
     this.draw();
+  }
+
+  // Botón grande de la pantalla: es lo que hace cualquier disparo que no acierte
+  // un botón concreto.
+  primary() {
+    if (this.mode === 'win') return { kind: 'next' };
+    if (this.mode === 'dead') return { kind: 'home' };
+    return null;
   }
 
   hide() {
@@ -396,7 +414,11 @@ class Panel {
   }
 
   fire(hit) {
-    const t = hit.target;
+    // El último disparo que mata al jefe llega justo cuando aparece la pantalla:
+    // se ignora ese primer segundo para no saltársela sin querer.
+    if ((this.mode === 'dead' || this.mode === 'win') && performance.now() - this.shownAt < 1200) return;
+    let t = hit && hit.target;
+    if (!t) t = this.primary();
     if (!t) return;
     if (this.mode === 'shop') {
       if (t.kind === 'next') { closeShop(); return; }
@@ -1239,8 +1261,11 @@ function frameBody(time, xrFrame) {
     weapon.hands.L.ammo = weapon.magSize;
     weapon.hands.R.ammo = weapon.magSize;
     bolts.update(dt, PLAYER, null);
-    if (S.mode === 'shop' && panel.active) panel.place();
   }
+
+  // En el visor la pantalla de fin es 3D y se dispara: se mantiene delante de
+  // la cara para que siempre se pueda alcanzar, aunque el jugador se gire.
+  if (panel.active && renderer.xr.isPresenting) panel.place();
 
   if (panel.active && panel.flash > 0) {
     panel.flash = Math.max(0, panel.flash - dt * 2);
@@ -1710,6 +1735,10 @@ function boot() {
   initXR();
   renderer.setAnimationLoop(frame);
   showCover();
+  // Los ocho shaders de enemigo se compilan aquí, con la portada quieta, no en
+  // mitad de la primera oleada. Antes se lanzaba al pulsar JUGAR y cada tipo
+  // costaba un tirón de 100-300 ms ya con el jugador disparando.
+  assetsReady.then(() => prewarmShaders(), () => prewarmShaders());
   // 3D plaque click on desktop (VR uses trigger)
   const coverRay = new THREE.Raycaster();
   const coverPtr = new THREE.Vector2();
@@ -1803,30 +1832,36 @@ async function onPlay() {
    Los tirones tenían dos causas medibles: props/HDRI entrando en escena con la
    partida en marcha, y el primer enemigo de cada tipo compilando su shader en
    mitad de la oleada (congelación de 100-300 ms). Aquí se resuelven las dos. */
-const QUALITY_STEPS = [1.5, 1.25, 1.0, 0.8];
-const quality = { i: 0, acc: 0, n: 0, hold: 0 };
+const QUALITY_STEPS = [1.25, 1.05, 0.9, 0.75];
+const quality = { i: 0, acc: 0, n: 0, hold: 0, spikes: 0 };
 
 function applyQuality(i) {
   quality.i = Math.max(0, Math.min(QUALITY_STEPS.length - 1, i));
   const pr = Math.min(QUALITY_STEPS[quality.i], window.devicePixelRatio || 1);
   renderer.setPixelRatio(pr);
   if (typeof composer !== 'undefined' && composer) composer.setPixelRatio(pr);
-  quality.acc = 0; quality.n = 0;
+  // En los dos escalones más bajos el bloom se apaga: son dos pasadas a pantalla
+  // completa más y es lo que de verdad pesa cuando la GPU no llega.
+  if (typeof bloom !== 'undefined' && bloom) bloom.enabled = quality.i < 2;
+  quality.acc = 0; quality.n = 0; quality.spikes = 0;
 }
 
 function autoQuality(dt) {
   if (renderer.xr.isPresenting) return;      // en el visor manda el navegador
   quality.acc += dt; quality.n++;
+  if (dt > 0.045) quality.spikes++;          // fotograma perdido = tirón visible
   if (quality.hold > 0) quality.hold -= dt;
-  if (quality.n < 90) return;                // ~1,5 s de muestra
+  if (quality.n < 60) return;                // ~1 s de muestra
   const avg = quality.acc / quality.n;
-  quality.acc = 0; quality.n = 0;
-  if (avg > 0.024 && quality.i < QUALITY_STEPS.length - 1) {
-    applyQuality(quality.i + 1);             // por debajo de ~40 fps: baja
-    quality.hold = 4;
-  } else if (avg < 0.0125 && quality.i > 0 && quality.hold <= 0) {
+  const spikes = quality.spikes;
+  quality.acc = 0; quality.n = 0; quality.spikes = 0;
+  const down = avg > 0.019 || spikes >= 3;   // <~52 fps, o tirones sueltos
+  if (down && quality.i < QUALITY_STEPS.length - 1) {
+    applyQuality(quality.i + 1);
+    quality.hold = 3;
+  } else if (avg < 0.0105 && quality.i > 0 && quality.hold <= 0) {
     applyQuality(quality.i - 1);             // va sobrado: recupera nitidez
-    quality.hold = 4;
+    quality.hold = 3;
   }
 }
 
@@ -1848,19 +1883,27 @@ function prewarmShaders() {
 
 function stepPrewarm() {
   if (!warmQueue.length) return;
-  const kind = warmQueue.shift();
-  const spot = new THREE.Vector3(0, -260, -12);
-  const t0 = performance.now();
-  let e = null, ok = false;
-  try {
-    e = makeEnemy(world, { pos: spot.clone(), dir: new THREE.Vector3(0, 0, -1), kind: 'ground' }, kind, 500);
-    e.group.position.copy(spot);
-    e.group.updateMatrixWorld(true);
-    renderer.compile(scene, camera);
-    ok = true;
-  } catch (err) { /* un tipo que falle no puede impedir jugar */ }
-  if (e) { try { scene.remove(e.group); } catch (err) { /* nada */ } }
-  warmLog.push({ kind, ok, ms: Math.round(performance.now() - t0) });
+  // Fuera de la partida sí; con el jugador disparando, NO. Compilar un tipo
+  // cuesta una congelación de 100-300 ms y era justo el tirón que se notaba al
+  // empezar cada nivel. En la portada y en los carteles de texto el tirón no
+  // se ve; en partida, sí.
+  if (S.mode === 'playing') return;
+  const batch = S.mode === 'cover' || S.mode === 'boot' ? 3 : 1;
+  for (let b = 0; b < batch && warmQueue.length; b++) {
+    const kind = warmQueue.shift();
+    const spot = new THREE.Vector3(0, -260, -12);
+    const t0 = performance.now();
+    let e = null, ok = false;
+    try {
+      e = makeEnemy(world, { pos: spot.clone(), dir: new THREE.Vector3(0, 0, -1), kind: 'ground' }, kind, 500);
+      e.group.position.copy(spot);
+      e.group.updateMatrixWorld(true);
+      renderer.compile(scene, camera);
+      ok = true;
+    } catch (err) { /* un tipo que falle no puede impedir jugar */ }
+    if (e) { try { scene.remove(e.group); } catch (err) { /* nada */ } }
+    warmLog.push({ kind, ok, ms: Math.round(performance.now() - t0) });
+  }
 }
 
 /* bloom solo en pantalla: en VR cuesta frames */
@@ -1869,7 +1912,12 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.62, 0.75, 0.72);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
-composer.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
+// El bloom es una pasada a pantalla completa más cinco desenfoques: hacerlo a
+// media resolución cuesta la cuarta parte y el resultado se ve igual (es un
+// halo difuso). Cualquier setSize posterior del composer baja ya escalado.
+const bloomSetSize = bloom.setSize.bind(bloom);
+bloom.setSize = (w, h) => bloomSetSize(Math.max(256, Math.round(w * 0.5)), Math.max(256, Math.round(h * 0.5)));
+composer.setPixelRatio(Math.min(1.25, window.devicePixelRatio || 1));
 
 boot();
 
