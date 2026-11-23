@@ -355,8 +355,15 @@ class Panel {
     this.ctx = this.cv.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.cv);
     this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, toneMapped: false });
+    // depthTest off + renderOrder alto: la placa se dibuja SIEMPRE encima de la
+    // calle. Con depthTest activo, mirando hacia una fachada el plano quedaba
+    // dentro de la geometría y la tienda "no aparecía", aunque sí estaba activa.
+    this.mat = new THREE.MeshBasicMaterial({
+      map: this.tex, transparent: true, toneMapped: false,
+      depthTest: false, depthWrite: false
+    });
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.4375), this.mat);
+    this.mesh.renderOrder = 880;
     this.mesh.visible = false;
     this.group = new THREE.Group();
     this.group.add(this.mesh);
@@ -870,7 +877,20 @@ function spawnOne(kind) {
   if (!node && kinds === 'ledge') {
     node = arena.pickNodeAhead(Math.random, 'ground', taken, 2.6, 10, 26, PLAYER);
   }
-  if (!node) return false;
+  if (!node) {
+    // Último recurso: si la calle no ofrece hueco, el enemigo entra igual,
+    // delante del jugador. Antes esto devolvía false y la oleada se quedaba
+    // vacía en silencio: el nivel arrancaba con HUD y sin un solo robot.
+    const flying = kind === 'drone' || kind === 'wasp';
+    node = {
+      pos: new THREE.Vector3(
+        rand(-3.2, 3.2),
+        flying ? rand(2.2, 3.6) : 0,
+        PLAYER.z - rand(11, 24)
+      ),
+      kind: kinds
+    };
+  }
   // el titán aguanta una campaña entera de plomo: ~30 s de fuego perfecto
   const bossHp = kind === 'boss' ? Math.round(3800 + S.level * 320) : undefined;
   const e = makeEnemy(world, node, kind, bossHp);
@@ -922,7 +942,23 @@ function updateBossApproach(dt) {
 function updateWaves(dt) {
   if (S.mode !== 'playing') return;
 
+  // Red 1: un nivel que arranca con la lista de oleadas vacía se reconstruye
+  // (o se cierra) en vez de quedarse con la calle vacía para siempre.
+  if (!waves.length && !S.boss) {
+    buildLevel(S.level);
+    if (!waves.length) { levelComplete(); return; }
+  }
+
   updateBossApproach(dt);
+
+  // Red 2: si una oleada se queda "spawning" sin cola y sin un solo enemigo
+  // vivo, era un punto muerto: el nivel seguía en marcha y no salía nada más.
+  if (S.waveState === 'spawn' && !S.queue.length && aliveCount() === 0) {
+    S.emptyT = (S.emptyT || 0) + dt;
+    if (S.emptyT > 2.5) { S.emptyT = 0; S.waveState = 'clear'; S.clearT = 0.6; }
+  } else if (S.emptyT) {
+    S.emptyT = 0;
+  }
 
   // Mientras el titán viva, la calle escupe refuerzos: no puedes dedicarte solo
   // a él. Con tope de vivos para que la pelea siga siendo ganable.
@@ -1391,13 +1427,13 @@ function flashHit() {
 /* ------------------------------------------------------------------ HUD mundo (VR) */
 const worldHud = (() => {
   const cv = document.createElement('canvas');
-  cv.width = 640; cv.height = 200;
+  cv.width = 640; cv.height = 240;
   const ctx = cv.getContext('2d');
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, opacity: 0.94 });
   const sp = new THREE.Sprite(mat);
-  sp.scale.set(0.64, 0.20, 1);
+  sp.scale.set(0.64, 0.24, 1);
   sp.position.set(0, -0.30, -0.95);
   sp.renderOrder = 990;
   sp.visible = false;
@@ -1486,6 +1522,17 @@ function updateWorldHud() {
   c.fillStyle = (mL && mR) ? '#5cff9d' : '#ff9f43';
   c.fillText('MANDOS ' + (weapon.hands.L.controller ? 'L' : '·') + (weapon.hands.R.controller ? 'R' : '·') +
     ' · ARMAS ' + (mL ? 'L' : '·') + (mR ? 'R' : '·'), 320, 188);
+
+  // Diagnóstico de estado (visible en el visor): modo, nivel, oleada, enemigos
+  // vivos y cola de spawn. Con esto, un fallo como «nivel 2 sin enemigos» se
+  // diagnostica con una simple foto del HUD en vez de a ciegas.
+  c.font = '600 17px ui-monospace, SFMono-Regular, monospace';
+  c.fillStyle = 'rgba(73,230,255,0.72)';
+  c.fillText(
+    'M:' + S.mode + ' L:' + S.level + ' O:' + (S.waveIndex + 1) + '/' + (waves.length || 0) +
+    ' V:' + aliveCount() + ' Q:' + (S.queue ? S.queue.length : 0),
+    320, 222
+  );
 
   tex.needsUpdate = true;
 }
@@ -1644,6 +1691,11 @@ function initXR() {
     });
     c.addEventListener('squeezestart', () => {
       if (S.mode === 'story') story.skip();
+      // Salida de emergencia de la tienda en el visor: si la placa no se ve o
+      // no se acierta a dispararle, el grip (que no dispara) la cierra. Sin
+      // esto, la tienda era un callejón sin salida: modo 'shop' bloquea las
+      // oleadas y sin cerrarla la calle se queda vacía para siempre.
+      else if (S.mode === 'shop') closeShop();
     });
   }
 }
@@ -1821,12 +1873,12 @@ function boot() {
   const tag = document.getElementById('buildtag');
   if (tag) {
     if (!navigator.xr) {
-      tag.textContent = 'v31 · sin xr';
+      tag.textContent = 'v32 · sin xr';
     } else {
       navigator.xr.isSessionSupported('immersive-vr').then((ok) => {
-        tag.textContent = 'v31 · ' + (ok ? 'vr lista' : 'vr no soportada');
+        tag.textContent = 'v32 · ' + (ok ? 'vr lista' : 'vr no soportada');
       }).catch((e) => {
-        tag.textContent = 'v31 · vr ' + ((e && e.name) || 'error');
+        tag.textContent = 'v32 · vr ' + ((e && e.name) || 'error');
       });
     }
   }
@@ -1871,8 +1923,13 @@ async function onPlay() {
     // AudioContext fuera del gesto lo dejaba suspendido y sin sonido.
     let pending = null;
     try {
+      // Solo lo que el juego usa de verdad. 'layers' y 'hand-tracking' estaban
+      // aquí y son los sospechosos del fallo del PRIMER intento en el navegador
+      // del visor: 'layers' obliga a una ruta de composición distinta. El
+      // reintento automático las quitaba, pero ya sin gesto de usuario, así que
+      // no podía entrar; de ahí que solo funcionase recargando y entrando otra vez.
       pending = navigator.xr.requestSession('immersive-vr', {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+        optionalFeatures: ['local-floor', 'bounded-floor']
       });
     } catch (e) { lastErr = e; }
     audio.init(); audio.resume(); music.start();
@@ -1900,10 +1957,21 @@ async function onPlay() {
       lastErr = err;
       console.warn('[CS] immersive-vr rechazado (mínimo)', err && err.name, err && err.message);
     }
-    // Ningún intento salió: se juega en pantalla, pero diciendo POR QUÉ. Sin este
-    // cartel el fallo era indistinguible de «no hay visor» y no había forma de
-    // diagnosticarlo desde dentro del visor.
-    flat(lastErr ? ((lastErr.name || 'Error') + (lastErr.message ? ': ' + lastErr.message : '')) : 'sin respuesta del visor');
+    // Ningún intento salió. En el visor, un botón para reintentar con un gesto
+    // nuevo: el primer requestSession a veces falla en frío (el runtime XR tarda
+    // en arrancar) y la segunda vez entra. Antes eso obligaba a RECARGAR la
+    // página, porque el reintento automático ya no llevaba gesto de usuario.
+    const why = lastErr ? ((lastErr.name || 'Error') + (lastErr.message ? ': ' + lastErr.message : '')) : 'sin respuesta del visor';
+    console.warn('[CS] VR no disponible:', why);
+    showOverlay(
+      'VR NO DISPONIBLE',
+      why,
+      'REINTENTAR VR',
+      () => { hideOverlay(); onPlay(); },
+      'Se puede volver a intentar sin recargar la página.<br>El segundo intento suele entrar.',
+      'JUGAR EN PANTALLA',
+      () => { hideOverlay(); startCampaign(); }
+    );
     return;
   }
 }
