@@ -10,7 +10,7 @@
    vieja aunque el push estuviera hecho. Aqui el propio HTML se compara con
    version.json (sin cache) y si no coincide se recarga una vez con sello. */
 (function () {
-  var BUILD = 31;
+  var BUILD = 33;
   if (window.__cbb) return;
   fetch('./version.json?_=' + Date.now(), { cache: 'no-store' })
     .then(function (r) { return r.json(); })
@@ -188,6 +188,6 @@
       window.__err = 'promise: ' + (e.reason && e.reason.message || e.reason);
     });
   </script>
-  <script type="module" src="./src/main.js?v=32"></script>
+  <script type="module" src="./src/main.js?v=33"></script>
 </body>
 </html>

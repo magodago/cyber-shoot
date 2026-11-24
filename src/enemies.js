@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TEX } from './fx.js';
 import { roundBox, detailSet, hose, vent, rivets, decal } from './detail.js';
+import { bakeStatic } from './batch.js';
 
 // ---------------------------------------------------------------------------
 // ENEMIGOS: aparecen en puntos fijos (suelo, balcones, azoteas, aire),
@@ -111,6 +112,19 @@ export class Enemy {
     this.group.position.y -= (this.def.rise || 1.6) * this.scaleBase;
     this.group.scale.setScalar(0.75 * this.scaleBase);
     this._addBeacon();
+
+    // Fusión de piezas rígidas: un centinela son 134 mallas sueltas y cada una
+    // cuesta una llamada de dibujo. Fundidas por material quedan ~10 y se
+    // conservan intactos los subárboles que se animan (rotores, brazos, patas).
+    const keeps = [];
+    for (const k of Object.keys(this)) {
+      if (k === 'world' || k === 'node' || k === 'def' || k === 'group') continue;
+      const v = this[k];
+      if (!v) continue;
+      if (v.isObject3D) keeps.push(v);
+      else if (Array.isArray(v)) { for (const it of v) if (it && it.isObject3D) keeps.push(it); }
+    }
+    this.batch = bakeStatic(this.group, keeps);
   }
 
   /* Baliza: los enemigos de balcón y azotea se pierden contra la fachada oscura.
@@ -313,6 +327,15 @@ export class Enemy {
   _idle() {}
 
   // los que van por el suelo no se atraviesan: se empujan y rodean
+  /* Entrada aérea: si aparece alto (enjambre desde arriba), la altura de
+     crucero se mezcla con la de entrada durante ~3,2 s. Baja en picado en vez
+     de teletransportarse al nivel de vuelo en el primer fotograma. */
+  _entryY(cruise) {
+    if (this.entryY === undefined) return cruise;
+    const k = Math.min(1, this.age / 3.2);
+    return cruise * k + this.entryY * (1 - k);
+  }
+
   _separate(dt) {
     const list = this.world.enemies;
     if (!list) return;
@@ -544,7 +567,8 @@ export class Drone extends Enemy {
     const nx = dx / dist, nz = dz / dist;
     if (this.orbitDir === undefined) this.orbitDir = Math.random() < 0.5 ? -1 : 1;
     const keep = 9.5;
-    const radial = Math.max(-2.4, Math.min(4.6, (dist - keep) * 1.15));
+    const far = dist > 22;
+    const radial = Math.max(-2.4, Math.min(far ? 15 : 4.6, (dist - keep) * (far ? 2.6 : 1.15)));
     const tang = 1.35 * this.orbitDir;
     const vx = nx * radial - nz * tang;
     const vz = nz * radial + nx * tang;
@@ -552,7 +576,8 @@ export class Drone extends Enemy {
     g.z += vz * dt;
     g.x = Math.max(-13, Math.min(13, g.x));
     g.z = Math.max(p.z - 75, Math.min(p.z + 10, g.z));
-    const targetY = Math.max(2.3, p.y + 0.6) + Math.sin(t * 1.9 + this.node.pos.x) * 0.28;
+    const cruiseY = Math.max(2.3, p.y + 0.6) + Math.sin(t * 1.9 + this.node.pos.x) * 0.28;
+    const targetY = this._entryY(cruiseY);
     g.y += (targetY - g.y) * Math.min(1, dt * 2.0);
     this.baseY = g.y;
     this.group.rotation.z = Math.sin(t * 1.7 + this.node.pos.z) * 0.07;
@@ -881,45 +906,81 @@ export class Sentry extends Enemy {
       rv.rotation.z = -sd * 0.17;
       this.group.add(rv);
 
-      add(RB(0.135, 0.3, 0.155, 0.03), dark, sd * 0.4, 1.29, 0);
-      add(RB(0.055, 0.19, 0.17, 0.018), plate, sd * 0.472, 1.3, 0);
-      add(new THREE.SphereGeometry(0.062, 8, 6), dark, sd * 0.4, 1.12, 0);
-      add(RB(0.125, 0.29, 0.145, 0.03), armor, sd * 0.4, 0.97, -0.03, -0.24);
-      add(RB(0.05, 0.21, 0.12, 0.014), plate, sd * 0.462, 0.99, -0.035, -0.24);
-      add(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 8), dark, sd * 0.4, 0.82, -0.085, -0.24);
+      // Brazo con pivote en el hombro: antes las piezas estaban soldadas al
+      // torso y el centinela parecía una estatua. Ahora cuelgan de un grupo
+      // que sí rota, así que respira y acompaña la puntería.
+      const arm = new THREE.Group();
+      arm.position.set(sd * 0.4, 1.47, 0);
+      this.group.add(arm);
+      const aAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x - sd * 0.4, y - 1.47, z);
+        m.rotation.set(rx, ry, rz);
+        arm.add(m);
+        return m;
+      };
+      aAdd(RB(0.135, 0.3, 0.155, 0.03), dark, sd * 0.4, 1.29, 0);
+      aAdd(RB(0.055, 0.19, 0.17, 0.018), plate, sd * 0.472, 1.3, 0);
+      aAdd(new THREE.SphereGeometry(0.062, 8, 6), dark, sd * 0.4, 1.12, 0);
+      aAdd(RB(0.125, 0.29, 0.145, 0.03), armor, sd * 0.4, 0.97, -0.03, -0.24);
+      aAdd(RB(0.05, 0.21, 0.12, 0.014), plate, sd * 0.462, 0.99, -0.035, -0.24);
+      aAdd(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 8), dark, sd * 0.4, 0.82, -0.085, -0.24);
+      if (sd < 0) this.armL = arm; else this.armR = arm;
     }
 
     // mano izquierda abierta (dedos sueltos, no un muñón)
-    add(RB(0.11, 0.13, 0.07, 0.02), dark, -0.4, 0.75, -0.1, -0.24);
-    for (let k = 0; k < 3; k++) {
-      add(new THREE.BoxGeometry(0.022, 0.075, 0.03), plate, -0.437 + k * 0.026, 0.69, -0.135, -0.5);
+    {
+      const a = this.armL;
+      const hand = (geo, mat, x, y, z, rx = 0, rz = 0) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x + 0.4, y - 1.47, z);
+        m.rotation.set(rx, 0, rz);
+        a.add(m);
+        return m;
+      };
+      hand(RB(0.11, 0.13, 0.07, 0.02), dark, -0.4, 0.75, -0.1, -0.24);
+      for (let k = 0; k < 3; k++) {
+        hand(new THREE.BoxGeometry(0.022, 0.075, 0.03), plate, -0.437 + k * 0.026, 0.69, -0.135, -0.5);
+      }
+      hand(new THREE.BoxGeometry(0.026, 0.06, 0.03), plate, -0.345, 0.72, -0.11, -0.6, 0.5);
     }
-    add(new THREE.BoxGeometry(0.026, 0.06, 0.03), plate, -0.345, 0.72, -0.11, -0.6, 0.5);
 
     /* ------------------------------------------------------------------ casco */
+    // Pivote real de cabeza: antes el casco iba soldado al cuerpo (el grupo
+    // `this.head` estaba vacío), así que el centinela no podía girar la cara.
+    // Ahora todas las piezas del casco cuelgan de este grupo y sí se animan.
+    const headG = new THREE.Group();
+    headG.position.set(0, 1.76, 0);
+    this.group.add(headG);
+    this.head = headG;
+    const hAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y - 1.76, z);
+      m.rotation.set(rx, ry, rz);
+      headG.add(m);
+      return m;
+    };
+
     add(new THREE.CylinderGeometry(0.062, 0.075, 0.13, 10), dark, 0, 1.62, 0);
-    add(RB(0.3, 0.26, 0.3, 0.06), armor, 0, 1.76, 0);
-    add(RB(0.235, 0.11, 0.05, 0.018), dark, 0, 1.755, -0.155);
-    const visor = add(RB(0.2, 0.045, 0.022, 0.01), lit, 0, 1.762, -0.178);
+    hAdd(RB(0.3, 0.26, 0.3, 0.06), armor, 0, 1.76, 0);
+    hAdd(RB(0.235, 0.11, 0.05, 0.018), dark, 0, 1.755, -0.155);
+    hAdd(RB(0.2, 0.045, 0.022, 0.01), lit, 0, 1.762, -0.178);
     const vglow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: TEX.glow, color: this.color, transparent: true, opacity: 0.55,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
     vglow.scale.setScalar(0.42);
-    vglow.position.set(0, 1.762, -0.19);
-    this.group.add(vglow);
+    vglow.position.set(0, 0.002, -0.19);
+    headG.add(vglow);
     // ceja, carrilleras y mandíbula
-    add(RB(0.31, 0.06, 0.13, 0.022), plate, 0, 1.865, -0.11, 0.28);
+    hAdd(RB(0.31, 0.06, 0.13, 0.022), plate, 0, 1.865, -0.11, 0.28);
     for (const sd of [-1, 1]) {
-      add(RB(0.06, 0.17, 0.13, 0.02), plate, sd * 0.152, 1.72, -0.09);
-      add(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 8), plate, sd * 0.15, 1.78, -0.17, Math.PI / 2);
+      hAdd(RB(0.06, 0.17, 0.13, 0.02), plate, sd * 0.152, 1.72, -0.09);
+      hAdd(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 8), plate, sd * 0.15, 1.78, -0.17, Math.PI / 2);
     }
-    add(RB(0.2, 0.08, 0.21, 0.022), dark, 0, 1.64, -0.02);
-    add(new THREE.CylinderGeometry(0.007, 0.007, 0.24, 4), plate, 0.105, 1.94, 0.03, 0.16);
-    add(new THREE.SphereGeometry(0.012, 6, 4), lit, 0.115, 2.055, 0.05);
-    this.head = new THREE.Group();
-    this.head.position.set(0, 1.76, 0);
-    this.group.add(this.head);
+    hAdd(RB(0.2, 0.08, 0.21, 0.022), dark, 0, 1.64, -0.02);
+    hAdd(new THREE.CylinderGeometry(0.007, 0.007, 0.24, 4), plate, 0.105, 1.94, 0.03, 0.16);
+    hAdd(new THREE.SphereGeometry(0.012, 6, 4), lit, 0.115, 2.055, 0.05);
 
     this.addHit(hitbox(0.46, 1, this, 'body', 1.05, 1.9));
     this.addHit(hitbox(0.22, 3, this, 'head', 1.76));
@@ -963,9 +1024,35 @@ export class Sentry extends Enemy {
 
   _idle(dt, t) {
     this.group.position.y = this.node.pos.y + Math.sin(t * 1.6 + this.node.pos.x) * 0.012;
+    const p = this.getPlayer();
+    if (this.head) {
+      // Giro de casco con tope + micro-temblor de servo: sin esto parecía una
+      // estatua con el arma flotando. El frente del modelo es -Z.
+      const dx = p.x - this.group.position.x;
+      const dz = p.z - this.group.position.z;
+      const rel = Math.atan2(dx, dz) + Math.PI - this.group.rotation.y;
+      const lim = Math.max(-0.6, Math.min(0.6, Math.atan2(Math.sin(rel), Math.cos(rel))));
+      const tw = Math.sin(t * 11.3 + this.node.pos.x * 2.1) * 0.014;
+      this.head.rotation.y += (lim + tw - this.head.rotation.y) * Math.min(1, dt * 4.5);
+      const wantPitch = Math.max(-0.16, Math.min(0.24, (p.y + 1.4 - (this.node.pos.y + 1.76)) * 0.14));
+      this.head.rotation.x += (wantPitch - this.head.rotation.x) * Math.min(1, dt * 3.2);
+      this.head.position.y = 1.76 + Math.sin(t * 1.6) * 0.006;
+    }
     if (this.gun) {
-      const p = this.getPlayer();
+      // el arma respira con el cuerpo y sigue al jugador, como ya hacía
+      this.gun.position.y = 1.08 + Math.sin(t * 1.6) * 0.008;
       this.gun.lookAt(p.x, p.y + 0.1, p.z);
+    }
+    // brazos: el izquierdo hace de contrapeso (sube un poco al apuntar) y el
+    // derecho acompaña la respiración; sin esto las manos quedaban clavadas
+    if (this.armL) {
+      const raise = Math.max(-0.35, Math.min(0.55, (p.y + 1.2 - (this.node.pos.y + 1.47)) * 0.2));
+      this.armL.rotation.x += ((-0.22 - raise * 0.6 + Math.sin(t * 1.6 + 0.7) * 0.03) - this.armL.rotation.x) * Math.min(1, dt * 3.4);
+      this.armL.rotation.z += ((-0.06 + Math.sin(t * 1.15) * 0.02) - this.armL.rotation.z) * Math.min(1, dt * 3.0);
+    }
+    if (this.armR) {
+      this.armR.rotation.x += ((-0.34 + Math.sin(t * 1.6 + 1.4) * 0.035) - this.armR.rotation.x) * Math.min(1, dt * 3.4);
+      this.armR.rotation.z += ((0.05 + Math.sin(t * 1.05 + 0.4) * 0.02) - this.armR.rotation.z) * Math.min(1, dt * 3.0);
     }
   }
 }
@@ -983,6 +1070,19 @@ export class Boss extends Enemy {
     this.coreOpen = false;
     this.ventT = 0;      // segundos que le quedan al núcleo abierto
     this.invulnT = 0;    // blindaje corto al cambiar de fase
+    // Barrido de reactor: el titán se ancla, carga y barre con un haz continuo
+    // que hay que romper de línea de visión. Es el giro del combate: ya no vale
+    // quedarse plantado disparando, hay que esconderse y salir al hueco.
+    this.searT = 0;
+    this.searCd = 10;
+    this.searDur = 3.7;
+    this.searCue = false;
+    this.beamAim = null;
+    this.beamHitT = 0;
+    // OJO: el mesh lo crea _build(), y super() ya lo ha ejecutado antes de
+    // llegar aquí. Poner this.beam = null borraba el haz recién creado y el
+    // barrido se quedaba sin rayo visible.
+    if (this.beam === undefined) this.beam = null;
   }
 
   // Ametrallar el pecho ya no es la solución: la coraza se come el daño y
@@ -1272,6 +1372,20 @@ export class Boss extends Enemy {
     this.hazard.position.y = -0.52;
     this.group.add(this.hazard);
 
+    // Haz del barrido: cilindro estirado en el mundo (no hijo del grupo) para
+    // que la longitud sea real y no herede la escala del titán.
+    this.beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1, 1, 10, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xffe066, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+      })
+    );
+    this.beam.visible = false;
+    this.beam.frustumCulled = false;
+    this.beam.scale.set(0.5, 34, 0.5);
+    this.world.scene.add(this.beam);
+
     this.muzzle.position.set(0, 3.2, -1.7);
     this.charge.position.copy(this.muzzle.position);
     this.charge.scale.setScalar(2);
@@ -1455,8 +1569,100 @@ export class Boss extends Enemy {
     if (this.world.audio && this.world.audio.shot) this.world.audio.shot();
   }
 
+  // Barrido de reactor. Tres tiempos: aviso (anillos + carga, sin haz), barrido
+  // de 140° con el núcleo abierto, y enfriamiento. Durante el barrido el titán
+  // no camina ni dispara ráfagas: el peligro es el haz y el premio es el núcleo.
+  _sear(dt, t) {
+    if (this.phase < 2 || this.dead) return;
+    if (this.searT <= 0) {
+      this.searCd -= dt;
+      if (this.searCd <= 0) {
+        this.searT = this.searDur;
+        this.searCue = false;
+        this.searCd = this.phase >= 3 ? 8.5 : 11.5;
+        this.state = 'cool';
+        this.st = 0;
+        this._openVent(this.searDur * 0.7);
+        if (this.world.fx) {
+          const gp = this.group.position;
+          this.world.fx.ring(new THREE.Vector3(gp.x, gp.y + 0.1, gp.z), 0xffe066, 10, 1.1);
+        }
+        if (this.world.audio && this.world.audio.waveStart) this.world.audio.waveStart();
+      }
+      return;
+    }
+
+    this.searT = Math.max(0, this.searT - dt);
+    const k = Math.min(1, 1 - this.searT / this.searDur);
+    const CHARGE = 0.34;                     // tercio inicial solo de aviso
+    const gp = this.group.position;
+    const origin = new THREE.Vector3(gp.x, gp.y + 3.15, gp.z);
+    const p = this.getPlayer();
+
+    if (k < CHARGE) {
+      if (!this.searCue) {
+        this.searCue = true;
+        const to = new THREE.Vector3(p.x - origin.x, 0, p.z - origin.z);
+        if (to.lengthSq() < 0.01) to.set(0, 0, -1);
+        this.beamAim = to.normalize();
+        if (this.world.fx) {
+          this.world.fx.ring(new THREE.Vector3(gp.x, gp.y + 0.1, gp.z), 0xff2d55, 5.5, 0.8);
+          this.world.fx.spark(origin, 0xffe066, 22, 5, 0.7, 0.14);
+        }
+        if (this.world.audio && this.world.audio.explode) this.world.audio.explode();
+      }
+      if (this.beam) this.beam.visible = false;
+      return;
+    }
+
+    // barrido: de -70° a +70° sobre la dirección apuntada al empezar
+    const s = (k - CHARGE) / (1 - CHARGE);
+    const dir = (this.beamAim || new THREE.Vector3(0, 0, -1)).clone()
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), (s - 0.5) * 2.44);
+    const LEN = 36;
+    if (this.beam) {
+      const end = origin.clone().addScaledVector(dir, LEN);
+      this.beam.visible = true;
+      this.beam.position.copy(origin).add(end).multiplyScalar(0.5);
+      this.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      this.beam.scale.set(0.55 + Math.sin(t * 22) * 0.08, LEN, 0.55 + Math.sin(t * 22) * 0.08);
+      this.beam.material.opacity = 0.72 + Math.sin(t * 26) * 0.16;
+    }
+    // el cuerpo acompaña al haz (el frente del modelo mira a -Z)
+    this.group.rotation.y = Math.atan2(-dir.x, -dir.z);
+
+    // daño por contacto con el haz: perpendicular corta y dentro del alcance
+    const rel = p.clone().sub(origin);
+    const along = rel.dot(dir);
+    const perp = rel.clone().addScaledVector(dir, -along).length();
+    if (along > 2 && along < LEN && perp < 1.7) {
+      this.beamHitT -= dt;
+      if (this.beamHitT <= 0) {
+        this.beamHitT = 0.36;
+        if (this.world.damagePlayer) this.world.damagePlayer(8);
+        if (this.world.audio && this.world.audio.playerHit) this.world.audio.playerHit();
+      }
+    } else {
+      this.beamHitT = 0;
+    }
+
+    if (this.searT === 0) {
+      if (this.beam) this.beam.visible = false;
+      this.beamHitT = 0;
+      this._closeVent();
+    }
+  }
+
   // ráfaga en abanico desde los dos cañones
   _ai(dt, t) {
+    this._sear(dt, t);
+    if (this.searT > 0) {
+      // anclado: sin desplazamiento ni ráfagas; el núcleo sigue su cuenta atrás
+      this._ventTick(dt, t);
+      if (this.charge) this.charge.material.opacity = 0;
+      return;
+    }
+    this.group.rotation.y *= 0.86;
     this._move(dt, t);
     this._radial(dt);
     this._ventTick(dt, t);
@@ -1502,6 +1708,7 @@ export class Boss extends Enemy {
 
   die() {
     if (this.dead) return;
+    if (this.beam) this.beam.visible = false;
     const p = this.group.position.clone().add(new THREE.Vector3(0, 2, 0));
     if (this.world.fx) {
       for (let i = 0; i < 6; i++) {
@@ -1512,6 +1719,16 @@ export class Boss extends Enemy {
       }
     }
     super.die();
+  }
+
+  remove() {
+    if (this.beam) {
+      this.world.scene.remove(this.beam);
+      this.beam.geometry.dispose();
+      this.beam.material.dispose();
+      this.beam = null;
+    }
+    super.remove();
   }
 }
 
@@ -1769,13 +1986,15 @@ export class Wasp extends Enemy {
     const nx = dx / dist, nz = dz / dist;
     if (this.orbitDir === undefined) this.orbitDir = Math.random() < 0.5 ? -1 : 1;
     const keep = 6.4 + this._sepSeed * 3.2;
-    const radial = Math.max(-1.6, Math.min(5.4, (dist - keep) * 1.8));
+    const far = dist > 22;
+    const radial = Math.max(-1.6, Math.min(far ? 16 : 5.4, (dist - keep) * (far ? 2.4 : 1.8)));
     const tang = 3.4 * this.orbitDir;
     g.x += (nx * radial - nz * tang) * dt;
     g.z += (nz * radial + nx * tang) * dt;
     g.x = Math.max(-13, Math.min(13, g.x));
     g.z = Math.max(p.z - 70, Math.min(p.z + 8, g.z));
-    const targetY = 1.9 + Math.sin(t * 5.2 + this._sepSeed * 9) * 0.5;
+    const cruiseY = 1.9 + Math.sin(t * 5.2 + this._sepSeed * 9) * 0.5 + Math.sin(t * 1.4 + this._sepSeed * 3) * 0.18;
+    const targetY = this._entryY(cruiseY);
     g.y += (targetY - g.y) * Math.min(1, dt * 3.4);
     this.baseY = g.y;
     this.group.rotation.z = Math.sin(t * 6 + this._sepSeed * 5) * 0.3;
@@ -1783,202 +2002,6 @@ export class Wasp extends Enemy {
   }
 
   _recoil() {}
-}
-
-// ------------------------------------------------------------------ torreta de azotea
-export class Turret extends Enemy {
-  _build() {
-    const body = this._mat(stdMat(0x94a0af, 0.95, 0.34));
-    const dark = this._mat(stdMat(0x2b3138, 0.9, 0.52));
-    const accent = neonMat(this.color);
-
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.52, 0.22, 8), dark);
-    base.position.y = 0.11;
-    this.group.add(base);
-    this.addHit(hitbox(0.5, 1, this, 'body', 0.35, 1.5));
-
-    for (let i = 0; i < 3; i++) {
-      const a = i / 3 * Math.PI * 2;
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.62), body);
-      arm.position.set(Math.cos(a) * 0.3, 0.05, Math.sin(a) * 0.3);
-      arm.rotation.y = -a;
-      this.group.add(arm);
-    }
-
-    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.19, 0.5, 8), body);
-    column.position.y = 0.47;
-    this.group.add(column);
-
-    this.head = new THREE.Group();
-    this.head.position.y = 0.82;
-    const casing = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.34, 0.44), body);
-    this.head.add(casing);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.035, 0.02), neonMat(0xff2d55));
-    visor.position.set(0, 0.05, -0.23);
-    this.head.add(visor);
-    for (const s of [-1, 1]) {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.62, 8), dark);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(s * 0.14, -0.04, -0.42);
-      this.head.add(barrel);
-      const ringBarrel = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 6, 12), accent);
-      ringBarrel.position.set(s * 0.14, -0.04, -0.64);
-      this.head.add(ringBarrel);
-    }
-    this.group.add(this.head);
-    this.addHit(hitbox(0.38, 2, this, 'head', 0.82));
-
-    const ammo = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.3), dark);
-    ammo.position.set(0.34, 0.42, 0.12);
-    this.group.add(ammo);
-    const ammoStripe = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.03, 0.03), accent);
-    ammoStripe.position.set(0.34, 0.42, -0.03);
-    this.group.add(ammoStripe);
-
-    this.muzzle.position.set(0, 0.78, -0.72);
-    this.charge.position.copy(this.muzzle.position);
-    this.baseY = this.node.pos.y;
-  }
-
-  _idle(dt, t) {
-    // clavada en la azotea: solo barre el cañón
-    this.head.rotation.y = Math.sin(t * 0.8 + this._sepSeed * 6) * 0.14;
-    this.head.rotation.x = Math.sin(t * 0.5) * 0.03;
-  }
-
-  _recoil() {
-    this.head.position.z = 0.06;
-  }
-
-  update(dt, t) {
-    super.update(dt, t);
-    if (this.head) this.head.position.z *= Math.max(0, 1 - dt * 7);
-  }
-}
-
-// ------------------------------------------------------------------ francotirador de balcón
-export class Sniper extends Enemy {
-  _build() {
-    // Contraste alto a propósito: es el enemigo más lejano del juego y se lee
-    // contra fachada oscura. Cuerpo azul-gris claro + tiras de neón verticales.
-    const body = this._mat(stdMat(0xffc24a, 1.0, 0.22));
-    const dark = this._mat(stdMat(0xaab6c6, 0.95, 0.36));
-    const accent = neonMat(this.color);
-
-    for (const s of [-1, 1]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.86, 0.12), dark);
-      leg.position.set(s * 0.12, 0.43, 0);
-      this.group.add(leg);
-      const knee = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.16), body);
-      knee.position.set(s * 0.12, 0.5, -0.03);
-      this.group.add(knee);
-    }
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.56, 0.26), body);
-    torso.position.y = 1.14;
-    torso.rotation.x = -0.06;
-    this.group.add(torso);
-    // dos tiras verticales de neón en el pecho: silueta legible a 30 m
-    for (const s of [-1, 1]) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.4, 0.02), accent);
-      strip.position.set(s * 0.1, 1.14, -0.14);
-      this.group.add(strip);
-    }
-    this.addHit(hitbox(0.48, 1, this, 'body', 1.12, 1.9));
-
-    const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.1, 0.2), dark);
-    shoulders.position.y = 1.4;
-    this.group.add(shoulders);
-
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.22), body);
-    head.position.set(0, 1.55, -0.04);
-    this.group.add(head);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.03, 0.02), neonMat(0xff2d55));
-    visor.position.set(0, 1.56, -0.16);
-    this.group.add(visor);
-
-    // rifle largo, desproporcionado a propósito: se reconoce desde lejos
-    const rifle = new THREE.Group();
-    rifle.position.set(0.16, 1.32, -0.1);
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.34), dark);
-    stock.position.z = 0.1;
-    rifle.add(stock);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.034, 1.15, 8), dark);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.z = -0.6;
-    rifle.add(barrel);
-    const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.12, 8), accent);
-    brake.rotation.x = Math.PI / 2;
-    brake.position.z = -1.18;
-    rifle.add(brake);
-    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.26, 8), body);
-    scope.rotation.x = Math.PI / 2;
-    scope.position.set(0, 0.09, -0.2);
-    rifle.add(scope);
-    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), neonMat(0x49e6ff));
-    lens.position.set(0, 0.09, -0.34);
-    rifle.add(lens);
-    this.group.add(rifle);
-    this.addHit(hitbox(0.34, 2.6, this, 'head', 1.55));
-
-    // Baliza: un punto rojo pulsante sobre la cabeza. De noche el francotirador
-    // se perdía contra la fachada y el jugador no sabía de dónde le disparaban.
-    this.beacon = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: TEX.glow, color: 0xff2d55, transparent: true,
-      opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending, fog: false
-    }));
-    this.beacon.scale.set(1.1, 1.1, 1);
-    this.beacon.position.set(0, 2.1, 0);
-    this.group.add(this.beacon);
-
-    this.muzzle.position.set(0.16, 1.32, -1.3);
-    this.charge.position.copy(this.muzzle.position);
-    this.baseY = this.node.pos.y;
-
-    // láser de puntería: avisa antes del disparo (se puede ver y esquivar)
-    this.beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.009, 0.009, 1, 5, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xff2d55, transparent: true, opacity: 0,
-        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
-      })
-    );
-    this.beam.visible = false;
-    this.beam.frustumCulled = false;
-    this.world.scene.add(this.beam);
-  }
-
-  _ai(dt, t) {
-    if (this.beacon) {
-      const k = 0.45 + 0.35 * (0.5 + 0.5 * Math.sin(t * 4.2));
-      this.beacon.material.opacity = k;
-      this.beacon.scale.setScalar(0.85 + 0.5 * k);
-    }
-    const on = (this.state === 'aim' || this.state === 'fire') && !this.dead && !this.removed;
-    if (on) {
-      const a = this.muzzle.getWorldPosition(new THREE.Vector3());
-      const b = this.getPlayer();
-      const d = a.distanceTo(b);
-      this.beam.visible = true;
-      this.beam.position.copy(a).add(b).multiplyScalar(0.5);
-      this.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-      this.beam.scale.set(1, d, 1);
-      const k = this.state === 'aim' ? Math.min(1, this.st / this.def.aimTime) : 1;
-      this.beam.material.opacity = 0.1 + k * 0.55;
-    } else {
-      this.beam.visible = false;
-    }
-    super._ai(dt, t);
-  }
-
-  remove() {
-    if (this.beam) {
-      this.world.scene.remove(this.beam);
-      this.beam.geometry.dispose();
-      this.beam.material.dispose();
-      this.beam = null;
-    }
-    super.remove();
-  }
 }
 
 // ------------------------------------------------------------------ araña suicida
@@ -2142,18 +2165,6 @@ export const ENEMY_DEFS = {
     aimTime: 0, burst: 0, burstGap: 0, cool: 99,
     boltSpeed: 0, spread: 0, damage: 0, rise: 0.8, riseTime: 0.4,
     Class: Crawler, turn: 8
-  },
-  turret: {
-    kind: 'turret', hp: 190, score: 220, color: 0xff2d55,
-    aimTime: 1.7, burst: 4, burstGap: 0.18, cool: 2.4,
-    boltSpeed: 22, spread: 0.12, damage: 6, rise: 0.9, riseTime: 0.7,
-    Class: Turret, turn: 1.4
-  },
-  sniper: {
-    kind: 'sniper', hp: 90, score: 160, color: 0xff2d55,
-    aimTime: 2.4, burst: 1, burstGap: 0.1, cool: 3.8,
-    boltSpeed: 34, spread: 0.06, damage: 9, rise: 0.6, riseTime: 0.8,
-    Class: Sniper, turn: 6
   },
   boss: {
     kind: 'boss', hp: 900, score: 1500, color: 0xff9f43, scale: 1.6,

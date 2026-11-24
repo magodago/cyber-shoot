@@ -7,7 +7,7 @@ import { Arena, PALETTES } from './arena.js?v=19';
 import { FX } from './fx.js?v=19';
 import { GameAudio } from './audio.js?v=19';
 import { WeaponSystem } from './weapon.js?v=21';
-import { makeEnemy, BoltField } from './enemies.js?v=19';
+import { makeEnemy, BoltField } from './enemies.js?v=20';
 import { Music } from './music.js?v=19';
 import { createCover } from './cover.js?v=27';
 import { createStory } from './story.js?v=19';
@@ -375,12 +375,26 @@ class Panel {
     this.flash = 0;
     this.flashMsg = '';
     this.pulse = 0;
+    // La tienda se cierra sola: en el visor la placa se quedaba esperando un
+    // disparo y el nivel no arrancaba nunca. 18 s de margen, y comprar lo
+    // reinicia para que nadie pierda la compra por ir lento.
+    this.shopT = 0;
+    this.shopAuto = 18;
+  }
+
+  update(dt) {
+    if (!this.active || this.mode !== 'shop' || dt <= 0) return;
+    this.shopT += dt;
+    const left = Math.max(0, Math.ceil(this.shopAuto - this.shopT));
+    if (left !== this._left) { this._left = left; this.draw(); }
+    if (this.shopT >= this.shopAuto) closeShop();
   }
 
   show(mode) {
     this.mode = mode;
     this.active = true;
     this.shownAt = performance.now();
+    if (mode === 'shop') { this.shopT = 0; this._left = undefined; }
     this.group.visible = true;
     this.mesh.visible = true;
     this.place();
@@ -439,6 +453,8 @@ class Panel {
       if (t.kind === 'next') { closeShop(); return; }
       if (t.kind === 'med') buyMed();
       else if (t.kind === 'card') buy(t.index);
+      // comprar da aire: el que está eligiendo no quiere que le arranquen el nivel
+      this.shopT = 0;
     } else if (this.mode === 'dead' || this.mode === 'win') {
       if (t.kind === 'next') restartRun();
       else if (t.kind === 'home') backToHome();
@@ -561,13 +577,24 @@ class Panel {
     c.strokeStyle = 'rgba(255,79,216,0.9)';
     c.lineWidth = 3;
     c.stroke();
+    const left = Math.max(0, Math.ceil(this.shopAuto - this.shopT));
     c.textAlign = 'center';
     c.fillStyle = '#ffffff';
     c.font = '800 40px Inter, system-ui, sans-serif';
-    c.fillText(S.level >= LEVELS ? 'ÚLTIMO NIVEL — VER RESULTADO' : 'SIGUIENTE NIVEL', 512, 552);
+    c.fillText(S.level >= LEVELS ? 'ÚLTIMO NIVEL — VER RESULTADO' : 'SIGUIENTE NIVEL', 512, 548);
     c.fillStyle = 'rgba(255,255,255,0.55)';
     c.font = '500 19px Inter, system-ui, sans-serif';
-    c.fillText('dispara aquí cuando estés listo', 512, 582);
+    c.fillText('dispara aquí o espera: arranca solo en ' + left + ' s', 512, 574);
+    // barra de cuenta atrás: se ve cuánto queda sin tapar el texto
+    const wprog = 932 * Math.min(1, this.shopT / this.shopAuto);
+    roundRect(c, 46, 584, 932, 6, 3);
+    c.fillStyle = 'rgba(255,255,255,0.12)';
+    c.fill();
+    if (wprog > 2) {
+      roundRect(c, 46, 584, wprog, 6, 3);
+      c.fillStyle = 'rgba(255,79,216,0.95)';
+      c.fill();
+    }
     this.rects.push({ kind: 'next', x: 46, y: 492, w: 932, h: 108 });
   }
 
@@ -721,17 +748,20 @@ let waves = [];
 
 function pickKind(level) {
   const r = Math.random();
-  if (level <= 1) return r < 0.45 ? 'drone' : r < 0.85 ? 'hound' : 'crawler';
+  // Roster definitivo: perros y arañas se quedan, el centinela plateado
+  // también. Torretas y francotiradores de balcón fuera: no se pueden
+  // rematar desde la calle y dejaban oleadas colgadas.
+  if (level <= 1) return r < 0.42 ? 'drone' : r < 0.78 ? 'hound' : r < 0.92 ? 'crawler' : 'wasp';
   if (level <= 2) {
-    return r < 0.30 ? 'drone' : r < 0.55 ? 'hound' : r < 0.70 ? 'crawler'
-      : r < 0.88 ? 'wasp' : 'turret';
+    return r < 0.34 ? 'drone' : r < 0.58 ? 'hound' : r < 0.74 ? 'crawler'
+      : r < 0.90 ? 'wasp' : 'sentry';
   }
   if (level <= 4) {
-    return r < 0.22 ? 'drone' : r < 0.40 ? 'hound' : r < 0.52 ? 'wasp'
-      : r < 0.64 ? 'crawler' : r < 0.78 ? 'sentry' : r < 0.90 ? 'turret' : 'sniper';
+    return r < 0.28 ? 'drone' : r < 0.46 ? 'hound' : r < 0.60 ? 'wasp'
+      : r < 0.72 ? 'crawler' : 'sentry';
   }
-  return r < 0.18 ? 'drone' : r < 0.33 ? 'hound' : r < 0.47 ? 'wasp'
-    : r < 0.58 ? 'crawler' : r < 0.72 ? 'sentry' : r < 0.86 ? 'turret' : 'sniper';
+  return r < 0.26 ? 'drone' : r < 0.42 ? 'hound' : r < 0.56 ? 'wasp'
+    : r < 0.68 ? 'crawler' : 'sentry';
 }
 
 function buildLevel(level) {
@@ -743,7 +773,7 @@ function buildLevel(level) {
   // Antes el jefe salía en la tercera oleada, después de ~25 enemigos: parecía
   // que el nivel no arrancaba y que el titán no existía.
   if (bossLevel) {
-    waves.push({ list: ['turret', 'sniper', 'drone', 'wasp', 'hound'], boss: true });
+    waves.push({ list: ['drone', 'wasp', 'crawler', 'hound', 'drone', 'wasp'], boss: true });
     return;
   }
 
@@ -754,12 +784,15 @@ function buildLevel(level) {
     const count = Math.round(5 + lv * 1.1 + w * 1.2);
     const list = [];
     for (let i = 0; i < count; i++) list.push(pickKind(level));
-    // variedad forzada: siempre algo aéreo y algo de azotea, francotirador desde el 2
+    // variedad forzada: siempre algo aéreo, y el centinela desde el sector 2
     if (!list.some(k => k === 'drone' || k === 'wasp')) list.push('wasp');
-    if (!list.some(k => k === 'turret')) list.push('turret');
-    // balcones: uno garantizado por oleada desde el sector 2 y dos desde el 4
-    if (level >= 2) list.push('sniper');
-    if (level >= 4) list.push('sniper');
+    if (level >= 2 && !list.some(k => k === 'sentry')) list.push('sentry');
+    // Enjambre: la última oleada de cada sector entra en masa por el fondo y
+    // por arriba. Es mundo abierto; los aéreos no tienen por qué llegar de frente.
+    if (w === n - 1) {
+      const swarm = 3 + level;
+      for (let i = 0; i < swarm; i++) list.push(i % 2 ? 'wasp' : 'drone');
+    }
     waves.push({ list, boss: false });
   }
 }
@@ -822,7 +855,7 @@ function clearEnemies() {
 const NODE_KIND = {
   drone: 'air', wasp: 'air',
   hound: 'ground', crawler: 'ground', sentry: 'ground',
-  turret: 'roof', sniper: 'ledge', boss: 'ground'
+  boss: 'ground'
 };
 
 // el jugador nunca se para: si un enemigo se queda atrás, vuelve a salir delante
@@ -850,6 +883,23 @@ function recycleBehind() {
   }
 }
 
+function airEntryNode(kinds) {
+  const high = Math.random() < 0.55;
+  const side = Math.random() < 0.5 ? -1 : 1;
+  if (high) {
+    // desde arriba: se les ve bajar del cielo raso del sector
+    return {
+      pos: new THREE.Vector3(side * rand(2.4, 9.5), rand(9.5, 16), PLAYER.z - rand(14, 32)),
+      kind: kinds
+    };
+  }
+  // desde el fondo: entrada larga a lo largo de la calle, por detrás del tráfico
+  return {
+    pos: new THREE.Vector3(side * rand(2.4, 11.5), rand(3.2, 7.5), PLAYER.z - rand(40, 62)),
+    kind: kinds
+  };
+}
+
 function spawnOne(kind) {
   const kinds = NODE_KIND[kind] || 'ground';
   const taken = enemies.filter(e => !e.dead).map(e => e.group.position);
@@ -867,6 +917,10 @@ function spawnOne(kind) {
     node.pos.y = 0;
     S.bossDist = BOSS_START;
     node.pos.z = PLAYER.z - S.bossDist;
+  }
+  if (!node && (kind === 'drone' || kind === 'wasp') && Math.random() < 0.7) {
+    // Los aéreos del enjambre no compiten por los nodos de la calle.
+    node = airEntryNode(kinds);
   }
   if (!node) {
     for (const gap of [3.2, 2.4, 1.6]) {
@@ -894,6 +948,9 @@ function spawnOne(kind) {
   // el titán aguanta una campaña entera de plomo: ~30 s de fuego perfecto
   const bossHp = kind === 'boss' ? Math.round(3800 + S.level * 320) : undefined;
   const e = makeEnemy(world, node, kind, bossHp);
+  // cota de entrada: los aéreos que aparecen por encima de la calle bajan en
+  // picado durante ~3 s en vez de desplomarse al primer fotograma.
+  if ((kind === 'drone' || kind === 'wasp') && node.pos.y > 8) e.entryY = node.pos.y;
   e.isBoss = kind === 'boss';
   enemies.push(e);
   if (e.isBoss) {
@@ -1317,6 +1374,7 @@ function frameBody(time, xrFrame) {
   }
 
   cover.update(dt);
+  panel.update(dt);
   story.update(dt);
 
   hudT -= dt;
@@ -2021,7 +2079,7 @@ function autoQuality(dt) {
 // UN TIPO POR FOTOGRAMA: compilar los ocho de golpe congelaba la imagen más de
 // un segundo en el visor (medido en el navegador de pruebas). Va durante la
 // pantalla de historia, así que el coste no se ve.
-const WARM_KINDS = ['drone', 'wasp', 'hound', 'crawler', 'sentry', 'turret', 'sniper', 'boss'];
+const WARM_KINDS = ['drone', 'wasp', 'hound', 'crawler', 'sentry', 'boss'];
 const warmQueue = [];
 let prewarmQueued = false;
 const warmLog = [];
