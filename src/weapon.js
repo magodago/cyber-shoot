@@ -460,9 +460,9 @@ export class WeaponSystem {
     this.sens = 1;
   }
 
-  get magSize() { return 34 + this.upgrades.mag * 6; }
-  get reloadTime() { return Math.max(0.30, 0.55 - this.upgrades.reload * 0.05); }
-  get fireDelay() { return Math.max(0.06, 0.09 - this.upgrades.rate * 0.005); }
+  get magSize() { return 60 + this.upgrades.mag * 10; }
+  get reloadTime() { return Math.max(0.20, 0.34 - this.upgrades.reload * 0.03); }
+  get fireDelay() { return Math.max(0.045, 0.075 - this.upgrades.rate * 0.004); }
   get damage() { return 16 + this.upgrades.dmg * 5; }
 
   attachControllers(renderer) {

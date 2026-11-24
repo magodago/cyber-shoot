@@ -7,7 +7,7 @@ import { Arena, PALETTES } from './arena.js?v=19';
 import { FX } from './fx.js?v=19';
 import { GameAudio } from './audio.js?v=19';
 import { WeaponSystem } from './weapon.js?v=21';
-import { makeEnemy, BoltField } from './enemies.js?v=20';
+import { makeEnemy, BoltField } from './enemies.js?v=37';
 import { Music } from './music.js?v=19';
 import { createCover } from './cover.js?v=27';
 import { createStory } from './story.js?v=19';
@@ -24,15 +24,20 @@ const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
 /* ------------------------------------------------------------------ estado */
 const S = {
-  mode: 'boot',          // boot | playing | shop | dead
+  mode: 'boot',          // boot | playing | story | paused | dead
   level: 1,
   score: 0,
-  credits: 0,
   kills: 0,
   combo: 1,
   comboT: 0,
   health: 140,
   maxHealth: 200,
+  // Escudo de agarre: se levanta mientras aprietas el botón y consume carga.
+  shield: 100,
+  shieldMax: 100,
+  shieldOn: false,
+  shieldT: 0,
+  shieldHitT: 0,
   waveIndex: 0,
   waveState: 'idle',
   waveT: 0,
@@ -126,6 +131,8 @@ const assetsReady = initAssets({ renderer, scene, arena }).catch((e) => console.
 const bolts = new BoltField(scene);
 
 const enemies = [];
+// Enemigos materializándose: primero se ve el portal, luego el robot.
+const pendingSpawns = [];
 const PLAYER = new THREE.Vector3(0, 1.35, 0);
 
 /* ------------------------------------------------------------------ armas */
@@ -165,7 +172,6 @@ function addKill(e) {
   S.combo = clamp(S.combo + 0.25, 1, 8);
   const pts = Math.round(e.scoreValue * S.combo * (e.isBoss ? 1.6 : 1));
   S.score += pts;
-  S.credits += Math.round(e.scoreValue / 5);
   if (e.isBoss) {
     S.boss = null;
     S.bossDist = 0;
@@ -188,6 +194,17 @@ function damagePlayer(dmg) {
   // en dos décimas de segundo y el jugador percibe el juego como injusto.
   const now = performance.now();
   if (now < (S.invulnUntil || 0)) return;
+  // Escudo por agarre: si está levantado y le queda carga, se come el impacto.
+  // No sale gratis: cada golpe se lleva más del doble de energía, así que
+  // aguantar arriba eternamente no es una opción, solo un respiro táctico.
+  if (S.shieldOn && S.shield > 3) {
+    S.shield = Math.max(0, S.shield - dmg * 2.6);
+    S.shieldHitT = 0.35;
+    S.invulnUntil = now + 320;
+    if (audio.shieldHit) audio.shieldHit(); else if (audio.playerHit) audio.playerHit();
+    shake(0.12);
+    return;
+  }
   S.invulnUntil = now + 700;
   // Antes el 0.62 dejaba cada impacto en 2-9 PV sobre 200 de vida: el jugador
   // aguantaba minutos sin sentir peligro. Ahora el golpe duele de verdad.
@@ -369,32 +386,13 @@ class Panel {
     this.group.add(this.mesh);
     scene.add(this.group);
     this.active = false;
-    this.mode = 'shop';
-    this.rects = [];
-    this.shownAt = 0;
-    this.flash = 0;
-    this.flashMsg = '';
-    this.pulse = 0;
-    // La tienda se cierra sola: en el visor la placa se quedaba esperando un
-    // disparo y el nivel no arrancaba nunca. 18 s de margen, y comprar lo
-    // reinicia para que nadie pierda la compra por ir lento.
-    this.shopT = 0;
-    this.shopAuto = 18;
-  }
-
-  update(dt) {
-    if (!this.active || this.mode !== 'shop' || dt <= 0) return;
-    this.shopT += dt;
-    const left = Math.max(0, Math.ceil(this.shopAuto - this.shopT));
-    if (left !== this._left) { this._left = left; this.draw(); }
-    if (this.shopT >= this.shopAuto) closeShop();
+    this.mode = 'dead';
   }
 
   show(mode) {
     this.mode = mode;
     this.active = true;
     this.shownAt = performance.now();
-    if (mode === 'shop') { this.shopT = 0; this._left = undefined; }
     this.group.visible = true;
     this.mesh.visible = true;
     this.place();
@@ -412,7 +410,6 @@ class Panel {
   hide() {
     this.active = false;
     this.group.visible = false;
-    this.mesh.visible = false;
   }
 
   place() {
@@ -449,13 +446,7 @@ class Panel {
     let t = hit && hit.target;
     if (!t) t = this.primary();
     if (!t) return;
-    if (this.mode === 'shop') {
-      if (t.kind === 'next') { closeShop(); return; }
-      if (t.kind === 'med') buyMed();
-      else if (t.kind === 'card') buy(t.index);
-      // comprar da aire: el que está eligiendo no quiere que le arranquen el nivel
-      this.shopT = 0;
-    } else if (this.mode === 'dead' || this.mode === 'win') {
+    if (this.mode === 'dead' || this.mode === 'win') {
       if (t.kind === 'next') restartRun();
       else if (t.kind === 'home') backToHome();
     }
@@ -475,8 +466,7 @@ class Panel {
     c.lineWidth = 4;
     c.stroke();
 
-    if (this.mode === 'shop') this.drawShop(c);
-    else if (this.mode === 'win') this.drawWin(c);
+    if (this.mode === 'win') this.drawWin(c);
     else this.drawDead(c);
 
     if (this.flash > 0) {
@@ -490,112 +480,6 @@ class Panel {
       c.fillText(this.flashMsg, 512, 620);
     }
     this.tex.needsUpdate = true;
-  }
-
-  drawShop(c) {
-    c.textAlign = 'left';
-    c.font = '800 46px Inter, system-ui, sans-serif';
-    c.fillStyle = '#ffffff';
-    c.fillText('NIVEL ' + S.level + ' SUPERADO', 46, 76);
-    c.font = '600 26px Inter, system-ui, sans-serif';
-    c.fillStyle = '#49e6ff';
-    c.fillText('CRÉDITOS ' + S.credits, 46, 118);
-
-    c.textAlign = 'right';
-    c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '500 22px Inter, system-ui, sans-serif';
-    c.fillText('dispara a una mejora', 978, 112);
-
-    const cols = 3, cw = 296, ch = 128, x0 = 46, y0 = 150, gap = 16;
-    SHOP.forEach((u, i) => {
-      const cx = x0 + (i % cols) * (cw + gap);
-      const cy = y0 + Math.floor(i / cols) * (ch + gap);
-      const lvl = S.up[u.key] || 0;
-      const max = u.max || 4;
-      const cost = costOf(u, lvl);
-      const afford = S.credits >= cost && lvl < max;
-
-      roundRect(c, cx, cy, cw, ch, 14);
-      c.fillStyle = lvl >= max ? 'rgba(255,255,255,0.05)' : afford ? 'rgba(73,230,255,0.12)' : 'rgba(255,45,85,0.08)';
-      c.fill();
-      c.strokeStyle = lvl >= max ? 'rgba(255,255,255,0.18)' : afford ? 'rgba(73,230,255,0.8)' : 'rgba(255,45,85,0.5)';
-      c.lineWidth = 2.5;
-      c.stroke();
-
-      c.textAlign = 'left';
-      c.fillStyle = '#ffffff';
-      c.font = '800 25px Inter, system-ui, sans-serif';
-      c.fillText(u.name, cx + 18, cy + 38);
-
-      c.fillStyle = 'rgba(255,255,255,0.62)';
-      c.font = '500 19px Inter, system-ui, sans-serif';
-      c.fillText(u.desc, cx + 18, cy + 68);
-
-      // nivel en pips
-      for (let k = 0; k < max; k++) {
-        c.beginPath();
-        c.arc(cx + 24 + k * 22, cy + 96, 6, 0, Math.PI * 2);
-        c.fillStyle = k < lvl ? '#49e6ff' : 'rgba(255,255,255,0.16)';
-        c.fill();
-      }
-
-      c.textAlign = 'right';
-      c.font = '800 26px Inter, system-ui, sans-serif';
-      c.fillStyle = lvl >= max ? 'rgba(255,255,255,0.4)' : afford ? '#ffe066' : '#ff4d6d';
-      c.fillText(lvl >= max ? 'MÁX' : cost + ' cr', cx + cw - 18, cy + 102);
-
-      this.rects.push({ kind: 'card', index: i, x: cx, y: cy, w: cw, h: ch });
-    });
-
-    // siguiente
-    // kit médico: barra propia encima de SIGUIENTE, no una séptima tarjeta
-    const mcost = medCost();
-    const mfull = S.health >= S.maxHealth;
-    const mok = !mfull && S.credits >= mcost;
-    roundRect(c, 46, 430, 932, 52, 14);
-    c.fillStyle = mfull ? 'rgba(255,255,255,0.05)' : mok ? 'rgba(92,255,157,0.14)' : 'rgba(255,45,85,0.08)';
-    c.fill();
-    c.strokeStyle = mfull ? 'rgba(255,255,255,0.18)' : mok ? 'rgba(92,255,157,0.85)' : 'rgba(255,45,85,0.55)';
-    c.lineWidth = 2.5;
-    c.stroke();
-    c.textAlign = 'left';
-    c.fillStyle = '#ffffff';
-    c.font = '800 25px Inter, system-ui, sans-serif';
-    c.fillText('KIT MÉDICO  +' + MEDKIT.heal + ' PV', 66, 464);
-    c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '500 19px Inter, system-ui, sans-serif';
-    c.fillText('VIDA ' + Math.max(0, Math.round(S.health)) + '/' + Math.round(S.maxHealth), 336, 463);
-    c.textAlign = 'right';
-    c.font = '800 25px Inter, system-ui, sans-serif';
-    c.fillStyle = mfull ? 'rgba(255,255,255,0.4)' : mok ? '#5cff9d' : '#ff4d6d';
-    c.fillText(mfull ? 'VIDA AL MÁXIMO' : mcost + ' cr', 958, 464);
-    this.rects.push({ kind: 'med', x: 46, y: 430, w: 932, h: 52 });
-
-    roundRect(c, 46, 492, 932, 108, 18);
-    c.fillStyle = 'rgba(255,79,216,0.16)';
-    c.fill();
-    c.strokeStyle = 'rgba(255,79,216,0.9)';
-    c.lineWidth = 3;
-    c.stroke();
-    const left = Math.max(0, Math.ceil(this.shopAuto - this.shopT));
-    c.textAlign = 'center';
-    c.fillStyle = '#ffffff';
-    c.font = '800 40px Inter, system-ui, sans-serif';
-    c.fillText(S.level >= LEVELS ? 'ÚLTIMO NIVEL — VER RESULTADO' : 'SIGUIENTE NIVEL', 512, 548);
-    c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '500 19px Inter, system-ui, sans-serif';
-    c.fillText('dispara aquí o espera: arranca solo en ' + left + ' s', 512, 574);
-    // barra de cuenta atrás: se ve cuánto queda sin tapar el texto
-    const wprog = 932 * Math.min(1, this.shopT / this.shopAuto);
-    roundRect(c, 46, 584, 932, 6, 3);
-    c.fillStyle = 'rgba(255,255,255,0.12)';
-    c.fill();
-    if (wprog > 2) {
-      roundRect(c, 46, 584, wprog, 6, 3);
-      c.fillStyle = 'rgba(255,79,216,0.95)';
-      c.fill();
-    }
-    this.rects.push({ kind: 'next', x: 46, y: 492, w: 932, h: 108 });
   }
 
   drawWin(c) {
@@ -614,7 +498,7 @@ class Panel {
     c.fillText('PUNTUACIÓN FINAL', 512, 296);
     c.fillStyle = 'rgba(255,255,255,0.72)';
     c.font = '500 26px Inter, system-ui, sans-serif';
-    c.fillText(S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión · ' + S.credits + ' créditos sin gastar', 512, 340);
+    c.fillText(S.kills + ' bajas · ' + Math.round(100 * S.hits / Math.max(1, S.shots)) + '% precisión', 512, 340);
 
     roundRect(c, 150, 380, 420, 110, 18);
     c.fillStyle = 'rgba(92,255,157,0.16)';
@@ -675,37 +559,6 @@ class Panel {
   }
 }
 
-const SHOP = [
-  { key: 'dmg', name: 'NÚCLEO PLASMA', desc: '+9 daño por bala', base: 220, max: 5 },
-  { key: 'mag', name: 'CARGADOR', desc: '+4 balas por pistola', base: 190, max: 5 },
-  { key: 'rate', name: 'SOBRECARGA', desc: 'más cadencia', base: 240, max: 5 },
-  { key: 'reload', name: 'MANOS RÁPIDAS', desc: 'recarga más rápida', base: 170, max: 4 },
-  { key: 'hp', name: 'BLINDAJE', desc: '+25 vida máxima', base: 210, max: 4 },
-  { key: 'pierce', name: 'PERFORANTE', desc: 'atraviesa +1 enemigo', base: 320, max: 2 }
-];
-
-function costOf(u, lvl) { return Math.round(u.base * (1 + lvl * 0.75) / 10) * 10; }
-
-// Kit médico: vida al instante en la tienda, con coste creciente. El blindaje
-// sube la vida máxima pero no cura; sin esto, llegar tocado al sector 4 era
-// una sentencia y no había nada que comprar para arreglarlo.
-const MEDKIT = { heal: 70, base: 110, step: 45 };
-function medCost() { return MEDKIT.base + (S.up.med || 0) * MEDKIT.step; }
-
-function buyMed() {
-  if (S.health >= S.maxHealth) { panel.flashMsg = 'VIDA AL MÁXIMO'; return; }
-  const cost = medCost();
-  if (S.credits < cost) {
-    panel.flashMsg = 'FALTAN ' + (cost - S.credits) + ' CRÉDITOS';
-    if (audio.dry) audio.dry();
-    return;
-  }
-  S.credits -= cost;
-  S.up.med = (S.up.med || 0) + 1;
-  S.health = Math.min(S.maxHealth, S.health + MEDKIT.heal);
-  panel.flashMsg = '';
-  if (audio.parry) audio.parry();
-}
 
 function roundRect(c, x, y, w, h, r) {
   c.beginPath();
@@ -720,18 +573,6 @@ function roundRect(c, x, y, w, h, r) {
 const panel = new Panel();
 const ray = new THREE.Raycaster();
 
-function buy(i) {
-  const u = SHOP[i];
-  const lvl = S.up[u.key] || 0;
-  const cost = costOf(u, lvl);
-  if (lvl >= (u.max || 4)) { panel.flashMsg = 'MEJORA AL MÁXIMO'; return; }
-  if (S.credits < cost) { panel.flashMsg = 'FALTAN ' + (cost - S.credits) + ' CRÉDITOS'; if (audio.dry) audio.dry(); return; }
-  S.credits -= cost;
-  S.up[u.key] = lvl + 1;
-  applyUpgrades();
-  panel.flashMsg = '';
-  if (audio.parry) audio.parry();
-}
 
 function applyUpgrades() {
   const u = S.up;
@@ -773,7 +614,7 @@ function buildLevel(level) {
   // Antes el jefe salía en la tercera oleada, después de ~25 enemigos: parecía
   // que el nivel no arrancaba y que el titán no existía.
   if (bossLevel) {
-    waves.push({ list: ['drone', 'wasp', 'crawler', 'hound', 'drone', 'wasp'], boss: true });
+    waves.push({ list: ['drone', 'wasp', 'crawler', 'hound', 'drone', 'wasp', 'crawler', 'drone', 'hound', 'wasp'], boss: true });
     return;
   }
 
@@ -781,7 +622,7 @@ function buildLevel(level) {
   for (let w = 0; w < n; w++) {
     // la curva se aplana desde el sector 3: más robots, pero sin avalancha
     const lv = level <= 2 ? level : 2 + (level - 2) * 0.55;
-    const count = Math.round(5 + lv * 1.1 + w * 1.2);
+    const count = Math.round(8 + lv * 1.9 + w * 1.8);
     const list = [];
     for (let i = 0; i < count; i++) list.push(pickKind(level));
     // variedad forzada: siempre algo aéreo, y el centinela desde el sector 2
@@ -797,12 +638,38 @@ function buildLevel(level) {
   }
 }
 
+const SECTOR_INTRO = {
+  2: [{ art: 'swarm', tag: 'SECTOR 2 · LA AVENIDA', title: 'VIENEN DE ARRIBA',
+    text: 'Cruzas la plaza y la ciudad cambia de reglas: aquí los drones ya no patrullan, cazan. Se cuelgan de las cornisas y caen en picado cuando te ven mirar hacia otro lado.' }],
+  3: [{ art: 'door', tag: 'SECTOR 3 · EL REGISTRO', title: 'ALGO BAJO EL HORMIGÓN',
+    text: 'El asfalto está abierto en canal. Bajo la plaza hay cableado viejo, y el cableado late. La compañía no construyó este sector: lo encontró.' }],
+  4: [{ art: 'city', tag: 'SECTOR 4 · LAS TORRES', title: 'NADIE MIRA ATRÁS',
+    text: 'Las torres se cierran sobre la calle y el aire huele a quemado. Cada balcón es una tronera. No hay ruta limpia: hay que abrirla a tiros.' }],
+  5: [{ art: 'door', tag: 'SECTOR 5 · LA PUERTA', title: 'LO QUE NO DEBÍA SALIR',
+    text: 'La calle termina en una puerta blindada con el sello de la compañía. Detrás no hay robots de patrulla. Detrás hay algo que construyeron para no tener que mirarlo nunca.' }],
+};
+
+
 function levelIntro(level) {
   if (level >= LEVELS) {
-    return [{ tag: 'SECTOR 6 · TITÁN', title: 'ALGO ENORME RESPIRA',
-      text: 'La puerta se abre sola. Tres pisos de metal, dos brazos como vigas y un cañón girando hacia ti. No hay cobertura: solo tú, el titán y lo que te quede en los cargadores.' }];
+    return [{ art: 'titan', tag: 'SECTOR 6 · TITÁN', title: 'ALGO ENORME RESPIRA',
+      text: 'La puerta se abre sola y el cielo se llena de motores. Una cañonera del tamaño de un bloque de viviendas desciende sobre la avenida: escudo de placas, núcleo al rojo en el vientre. Cuando baje la guardia, dispara al núcleo. Hasta entonces, sobrevive.' }];
   }
-  return null;
+  return SECTOR_INTRO[level] || null;
+}
+
+// Sin tienda: el operador se mejora solo al entrar en cada sector. La curva
+// reproduce lo que antes se compraba y se aplica antes de que nazcan los
+// enemigos, así que ningún sector queda injugable por no haber gastado nada.
+function autoProgress(level) {
+  const lv = Math.max(1, level);
+  S.up.dmg = Math.min(4, Math.floor((lv - 1) * 0.75));
+  S.up.mag = Math.min(3, Math.floor(lv / 2));
+  S.up.rate = lv >= 3 ? Math.min(2, Math.floor((lv - 2) / 2) + 1) : 0;
+  S.up.reload = Math.min(2, Math.floor((lv - 1) / 2));
+  S.up.hp = Math.min(4, lv - 1);
+  S.up.crit = lv >= 4 ? 1 : 0;
+  S.up.pierce = lv >= 5 ? 1 : 0;
 }
 
 function startLevel(level) {
@@ -830,6 +697,7 @@ function startLevel(level) {
   // entre niveles el operador respira: recupera un tercio de la vida máxima
   if (level > 1) S.health = Math.min(S.maxHealth, S.health + S.maxHealth * 0.34);
 
+  autoProgress(level);
   applyUpgrades();
   weapon.enabled = true;
   panel.hide();
@@ -849,6 +717,8 @@ function clearEnemies() {
     if (e.group) scene.remove(e.group);
     e.dead = true; e.removed = true;
   }
+  for (const s of pendingSpawns) { if (s.e && s.e.group) s.e.group.visible = false; }
+  pendingSpawns.length = 0;
   enemies.length = 0;
 }
 
@@ -952,7 +822,22 @@ function spawnOne(kind) {
   // picado durante ~3 s en vez de desplomarse al primer fotograma.
   if ((kind === 'drone' || kind === 'wasp') && node.pos.y > 8) e.entryY = node.pos.y;
   e.isBoss = kind === 'boss';
-  enemies.push(e);
+  // Los robots de a pie no surgen de la nada: se abre un portal de luz en el
+  // suelo, la columna sube y medio segundo después el bicho se materializa.
+  // Así la aparición se lee como algo que ocurre en la calle, no como un pop.
+  if (e.isBoss || kind === 'drone' || kind === 'wasp' || node.kind === 'ledge') {
+    enemies.push(e);
+  } else {
+    e.group.visible = false;
+    pendingSpawns.push({ e, t: 0.55 });
+    const gp = e.group.position.clone();
+    gp.y = Math.max(0.05, node.pos.y);
+    if (fx) {
+      fx.ring(gp, 0x49e6ff, 2.4, 0.6);
+      fx.ring(gp, 0x7a5cff, 1.3, 0.45);
+      fx.spark(gp, 0x9ff6ff, 14, 3.4, 0.55, 0.09);
+    }
+  }
   if (e.isBoss) {
     S.boss = e; music.setIntensity(2); shake(0.5);
     // entrada del titán: ondas de choque y chispas para que se note a 20 m
@@ -986,14 +871,24 @@ const BOSS_START = 26, BOSS_NEAR = 3.4;
 function updateBossApproach(dt) {
   const b = S.boss;
   if (!b || b.dead || S.mode !== 'playing') return;
-  if (b.state === 'spawn') return;            // aún saliendo de la calzada
-  // Cada fase que pierde lo hace enfadar: aprieta el paso. A 0,40 u/s cruza
-  // la calle en algo menos de un minuto: hay que hacer daño de verdad, no
-  // pasarse el cargador contra la coraza.
-  const speed = 0.40 + Math.max(0, (b.phase || 1) - 1) * 0.12;
-  S.bossDist = Math.max(BOSS_NEAR, S.bossDist - dt * speed);
-  b.node.pos.z = PLAYER.z - S.bossDist;
-  if (S.bossDist <= BOSS_NEAR) gameOver('EL TITÁN TE ALCANZÓ');
+  // La nave se mueve sola (entra, orbita y hace pasadas): aquí ya no hay reloj
+  // que acerque nada. Solo se mide la distancia real y se cobra la embestida
+  // cuando pasa por encima de ti. Ya no existe la muerte automática.
+  const bp = (b.group && b.group.position) || b.node.pos;
+  const d = Math.hypot(bp.x - PLAYER.x, bp.z - PLAYER.z);
+  S.bossDist = d;
+  if (d < 5.4) {
+    const now = performance.now();
+    if (now > (S.ramCd || 0)) {
+      S.ramCd = now + 950;
+      damagePlayer(9);
+      shake(0.5);
+      if (fx && fx.ring) fx.ring(PLAYER.clone(), 0xff2d55, 1.9, 0.3);
+    }
+    // empujón: la nave no se queda plantada encima del jugador
+    b.node.pos.z = PLAYER.z - 6.6;
+    if (b.group) b.group.position.z += 0;
+  }
 }
 
 function updateWaves(dt) {
@@ -1051,7 +946,9 @@ function updateWaves(dt) {
         }
         else S.queue.push(kind);
       }
-      S.spawnT = rand(0.30, 0.55);
+      // La calle escupe robots sin pausas: el enjambre se siente denso y
+      // continuo, no una fila de uno en uno.
+      S.spawnT = rand(0.16, 0.30);
     }
     if (!S.queue.length) { S.waveState = 'clear'; S.clearT = 0; }
     return;
@@ -1110,8 +1007,25 @@ function rescueStuckEnemies() {
   }
 }
 
+function updatePendingSpawns(dt) {
+  for (let i = pendingSpawns.length - 1; i >= 0; i--) {
+    const s = pendingSpawns[i];
+    s.t -= dt;
+    if (s.t > 0) continue;
+    pendingSpawns.splice(i, 1);
+    if (!s.e || s.e.dead) continue;
+    s.e.group.visible = true;
+    enemies.push(s.e);
+    const gp = s.e.group.position.clone();
+    if (fx) {
+      fx.ring(gp, 0xff2d55, 1.7, 0.35);
+      fx.spark(gp, 0x49e6ff, 10, 2.6, 0.35, 0.07);
+    }
+  }
+}
+
 function aliveCount() {
-  let n = 0;
+  let n = pendingSpawns.length;
   for (const e of enemies) if (e && !e.dead) n++;
   return n;
 }
@@ -1123,39 +1037,21 @@ function levelComplete() {
   bolts.clear();
   music.setIntensity(0.7);
   S.score += 250 * S.level;
-  S.credits += 120;
   panel.flashMsg = '';
   updateHud(true);
-  playStory(STORY_OUT[S.level] || [], openShop);
+  playStory(STORY_OUT[S.level] || [], nextSector);
 }
 
-function openShop() {
+// La tienda ya no existe: al cerrar la viñeta el sector siguiente arranca solo.
+function nextSector() {
   if (S.mode !== 'story' && S.mode !== 'playing') return;
-  S.mode = 'shop';
-  weapon.enabled = true;
-  panel.show('shop');
-  updateHud(true);
-}
-
-function closeShop() {
-  if (S.mode !== 'shop') return;
   panel.hide();
-  if (S.level >= LEVELS) {
-    playStory(STORY_FINALE, victory);
-    return;
-  }
+  if (S.level >= LEVELS) { playStory(STORY_FINALE, victory); return; }
   const next = S.level + 1;
   const intro = levelIntro(next);
   startLevel(next);
-  // el sector del titán se presenta con su propia viñeta; al cerrarla hay que
-  // devolver el control (con done=null el modo se quedaba en 'story' y el
-  // titán no llegaba a salir nunca)
   if (intro) {
-    playStory(intro, () => {
-      S.mode = 'playing';
-      weapon.enabled = true;
-      updateHud(true);
-    });
+    playStory(intro, () => { S.mode = 'playing'; weapon.enabled = true; updateHud(true); });
   }
 }
 
@@ -1199,7 +1095,7 @@ function gameOver(why) {
 }
 
 function resetRun() {
-  S.score = 0; S.credits = 0; S.kills = 0; S.shots = 0; S.hits = 0;
+  S.score = 0; S.kills = 0; S.shots = 0; S.hits = 0;
   S.combo = 1; S.comboT = 0;
   S.up = { dmg: 0, mag: 0, rate: 0, reload: 0, hp: 0, pierce: 0, crit: 0, med: 0 };
   S.maxHealth = 200; S.health = 200;
@@ -1218,6 +1114,8 @@ function restartRun() {
 // el botón INICIO del panel del visor.
 function backToHome() {
   for (const e of enemies) { if (e) { e.dead = true; if (e.group) e.group.visible = false; } }
+  for (const s of pendingSpawns) { if (s.e && s.e.group) s.e.group.visible = false; }
+  pendingSpawns.length = 0;
   enemies.length = 0;
   bolts.clear();
   panel.hide();
@@ -1311,6 +1209,7 @@ function frameBody(time, xrFrame) {
   if (S.mode !== 'playing') strafeV *= Math.max(0, 1 - dt * 6);
   rig.position.x = strafe * Math.cos(yaw);
   rig.position.z = -travel - strafe * Math.sin(yaw);
+  updatePlayerShield(dt);
   camera.getWorldPosition(PLAYER);
   PLAYER.y = 1.35;
   world.playerVel.copy(PLAYER).sub(prevPlayer).divideScalar(Math.max(0.001, dt));
@@ -1330,6 +1229,7 @@ function frameBody(time, xrFrame) {
   music.update();
 
   if (S.mode === 'playing') {
+    updatePendingSpawns(dt);
     updateWaves(dt);
     recycleBehind();
     for (let i = enemies.length - 1; i >= 0; i--) {
@@ -1357,11 +1257,6 @@ function frameBody(time, xrFrame) {
       const calm = performance.now() - (S.invulnUntil || 0) > 4500;
       if (calm) S.health = Math.min(S.maxHealth, S.health + dt * (S.waveState === 'clear' ? 6 : 2.2));
     }
-  } else if (S.mode === 'shop') {
-    // en la tienda los enemigos no existen y el arma está al máximo
-    weapon.hands.L.ammo = weapon.magSize;
-    weapon.hands.R.ammo = weapon.magSize;
-    bolts.update(dt, PLAYER, null);
   }
 
   // En el visor la pantalla de fin es 3D y se dispara: se mantiene delante de
@@ -1374,7 +1269,6 @@ function frameBody(time, xrFrame) {
   }
 
   cover.update(dt);
-  panel.update(dt);
   story.update(dt);
 
   hudT -= dt;
@@ -1403,6 +1297,7 @@ function applyShake(dt) {
   shakeAmp = Math.max(0, shakeAmp - dt * 2.2);
   camera.position.x = rand(-1, 1) * shakeAmp * 0.035;
   camera.position.y = 1.62 + rand(-1, 1) * shakeAmp * 0.03;
+  camera.position.z = 0;
 }
 
 /* ------------------------------------------------------------------ HUD DOM */
@@ -1415,15 +1310,16 @@ function updateHud(force) {
   }
   const hn = $('#hp-num');
   if (hn) hn.textContent = Math.ceil(S.health);
+  const sf = $('#sh-fill');
+  if (sf) sf.style.width = (clamp(S.shield / S.shieldMax, 0, 1) * 100).toFixed(1) + '%';
 
   setAmmo('#ammoL', '#magL', weapon.hands.L);
   setAmmo('#ammoR', '#magR', weapon.hands.R);
 
   const sc = $('#score'); if (sc) sc.textContent = S.score.toLocaleString('es-ES');
-  const cr = $('#credits'); if (cr) cr.textContent = S.credits + ' cr';
   const lv = $('#lvl'); if (lv) lv.textContent = 'NIVEL ' + S.level;
   const wv = $('#wave');
-  if (wv) wv.textContent = S.mode === 'playing' ? ('OLEADA ' + Math.min(S.waveIndex + 1, waves.length) + '/' + waves.length) : (S.mode === 'shop' ? 'TIENDA' : '');
+  if (wv) wv.textContent = S.mode === 'playing' ? ('OLEADA ' + Math.min(S.waveIndex + 1, waves.length) + '/' + waves.length) : '';
   const cb = $('#combo');
   if (cb) {
     cb.textContent = S.combo > 1.05 ? 'x' + S.combo.toFixed(2) : '';
@@ -1492,7 +1388,7 @@ const worldHud = (() => {
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, opacity: 0.94 });
   const sp = new THREE.Sprite(mat);
   sp.scale.set(0.64, 0.24, 1);
-  sp.position.set(0, -0.30, -0.95);
+  sp.position.set(0, -0.40, -0.95);
   sp.renderOrder = 990;
   sp.visible = false;
   camera.add(sp);
@@ -1523,6 +1419,56 @@ const hitFlash = (() => {
   return { cv, tex, sp, mat };
 })();
 
+// Escudo de agarre: cúpula de luz alrededor del jugador. Cuelga de rig, no de
+// la cámara, para que se lea como una esfera de verdad y no como un filtro.
+const playerShield = (() => {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 32, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0x49e6ff, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    })
+  );
+  mesh.position.set(0, 1.15, 0);
+  mesh.scale.setScalar(0.98);
+  mesh.visible = false;
+  mesh.renderOrder = 900;
+  const ringMat = () => new THREE.MeshBasicMaterial({
+    color: 0x9ff6ff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+  });
+  const r1 = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.014, 8, 64), ringMat());
+  r1.rotation.x = Math.PI / 2;
+  const r2 = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.014, 8, 64), ringMat());
+  r2.rotation.set(Math.PI / 2, 0, Math.PI / 3);
+  mesh.add(r1); mesh.add(r2);
+  rig.add(mesh);
+  return { mesh, mat: mesh.material, r1, r2 };
+})();
+
+function updatePlayerShield(dt) {
+  const p = playerShield;
+  const want = S.shieldOn && S.shield > 1 && S.mode === 'playing';
+  const k = Math.min(1, dt * 9);
+  p.mat.opacity += ((want ? 0.20 : 0) - p.mat.opacity) * k;
+  const ro = want ? 0.5 : 0;
+  p.r1.material.opacity += (ro - p.r1.material.opacity) * k;
+  p.r2.material.opacity += (ro - p.r2.material.opacity) * k;
+  if (S.shieldHitT > 0) S.shieldHitT = Math.max(0, S.shieldHitT - dt);
+  p.mesh.visible = p.mat.opacity > 0.005 || p.r1.material.opacity > 0.005;
+  if (p.mesh.visible) {
+    const pulse = 1 + Math.sin(t * 7) * 0.02 + S.shieldHitT * 0.14;
+    p.mesh.scale.setScalar(pulse);
+    p.r1.rotation.z += dt * 1.4;
+    p.r2.rotation.z -= dt * 1.1;
+    p.mat.color.setHex(S.shield < 30 ? 0xff2d55 : 0x49e6ff);
+  }
+  // Carga: baja mientras lo sostienes, se recupera al soltarlo.
+  if (want) S.shield = Math.max(0, S.shield - dt * 8);
+  else S.shield = Math.min(S.shieldMax, S.shield + dt * 13);
+  if (S.shield <= 1) S.shieldOn = false;
+}
+
 function updateWorldHud() {
   if (!renderer.xr.isPresenting) return;
   const { ctx: c, cv, tex, sp } = worldHud;
@@ -1551,11 +1497,20 @@ function updateWorldHud() {
   c.fillStyle = 'rgba(255,255,255,0.55)';
   c.fillText('/ ' + S.maxHealth, 432 + hw + 6, 60);
 
+  /* --- escudo: barra fina bajo la vida --- */
+  const shp = clamp(S.shield / S.shieldMax, 0, 1);
+  c.fillStyle = 'rgba(255,255,255,0.14)';
+  c.fillRect(26, 82, 390, 14);
+  c.fillStyle = shp < 0.3 ? '#ff2d55' : '#7a5cff';
+  c.fillRect(26, 82, 390 * shp, 14);
+  c.font = '700 18px Inter, system-ui, sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.55)';
+  c.fillText(S.shieldOn ? 'ESCUDO ACTIVO' : 'ESCUDO', 424, 94);
+
   /* --- créditos · nivel/oleada · puntos --- */
   c.textAlign = 'left';
   c.font = '700 24px Inter, system-ui, sans-serif';
   c.fillStyle = '#ffd166';
-  c.fillText(S.credits + ' cr', 26, 112);
   c.textAlign = 'center';
   c.font = '700 22px Inter, system-ui, sans-serif';
   c.fillStyle = 'rgba(255,255,255,0.82)';
@@ -1650,6 +1605,8 @@ let yaw = 0, pitch = 0;
 const input = { left: false, right: false, up: false, down: false };
 // Gatillo pulsado (VR o ratón): alimenta el disparo continuo del bucle.
 const held = { L: false, R: false };
+// Agarre sostenido en VR: mientras haya al menos uno apretado, el escudo vive.
+let gripCount = 0;
 
 function initDesktop() {
   const el = renderer.domElement;
@@ -1689,6 +1646,8 @@ function initDesktop() {
       if (b && typeof b.onclick === 'function') { e.preventDefault(); b.onclick(); return; }
     }
     if (e.code === 'KeyR') { weapon.reload('L', true); weapon.reload('R', true); }
+    // En escritorio el escudo se sostiene con la barra espaciadora.
+    if (e.code === 'Space' && S.mode === 'playing') { e.preventDefault(); S.shieldOn = true; }
     if (e.code === 'KeyA' || e.code === 'ArrowLeft') input.left = true;
     if (e.code === 'KeyD' || e.code === 'ArrowRight') input.right = true;
     if (e.code === 'KeyE') { /* reservado */ }
@@ -1700,6 +1659,7 @@ function initDesktop() {
   document.addEventListener('keyup', (e) => {
     if (e.code === 'KeyA' || e.code === 'ArrowLeft') input.left = false;
     if (e.code === 'KeyD' || e.code === 'ArrowRight') input.right = false;
+    if (e.code === 'Space') S.shieldOn = false;
   });
   window.addEventListener('blur', () => { input.left = input.right = false; });
   document.addEventListener('contextmenu', (e) => {
@@ -1716,13 +1676,13 @@ function initXR() {
     yaw = 0; pitch = 0;
     rig.rotation.set(0, 0, 0);
     camera.position.set(0, 0, 0);
-    if (S.mode === 'boot' || S.mode === 'dead' || S.mode === 'shop') startCampaign();
+    if (S.mode === 'boot' || S.mode === 'dead' || S.mode === 'paused') startCampaign();
     if (audio.ready) music.start();
   });
   renderer.xr.addEventListener('sessionend', () => {
     worldHud.sp.visible = false;
     if (S.mode !== 'dead') {
-      S.mode = 'shop';
+      S.mode = 'paused';
       panel.hide();
     }
     showOverlay('CYBER SHOOT', 'Sesión VR finalizada. Pulsa JUGAR para continuar en pantalla.', 'JUGAR EN PANTALLA', () => { startLevel(S.level); });
@@ -1749,11 +1709,13 @@ function initXR() {
     });
     c.addEventListener('squeezestart', () => {
       if (S.mode === 'story') story.skip();
-      // Salida de emergencia de la tienda en el visor: si la placa no se ve o
-      // no se acierta a dispararle, el grip (que no dispara) la cierra. Sin
-      // esto, la tienda era un callejón sin salida: modo 'shop' bloquea las
-      // oleadas y sin cerrarla la calle se queda vacía para siempre.
-      else if (S.mode === 'shop') closeShop();
+      // El agarre levanta el escudo mientras se mantiene apretado.
+      gripCount++;
+      if (S.mode === 'playing') S.shieldOn = true;
+    });
+    c.addEventListener('squeezeend', () => {
+      gripCount = Math.max(0, gripCount - 1);
+      if (!gripCount) S.shieldOn = false;
     });
   }
 }
@@ -1901,7 +1863,9 @@ function boot() {
       stuck++;
       if (stuck === 2) {                       // 2 s sin dibujar: limpia la basura
         for (const e of enemies) if (e && !e.isBoss && !e.removed) e.remove();
-        enemies.length = 0;
+        for (const s of pendingSpawns) { if (s.e && s.e.group) s.e.group.visible = false; }
+  pendingSpawns.length = 0;
+  enemies.length = 0;
         if (S.mode === 'playing') S.waveT = 0;
       } else if (stuck >= 6) {                 // 6 s: reinicia el bucle
         S.mode = 'playing';
@@ -2138,4 +2102,4 @@ composer.setPixelRatio(Math.min(1.25, window.devicePixelRatio || 1));
 boot();
 
 /* depuración: consola del navegador */
-window.__CS = () => ({ S, enemies, waves, arena, weapon, scene, camera, world, bolts, startLevel, hitTest, ray, panel, restartRun, closeShop, buy, travel: () => travel, player: () => PLAYER.clone(), story, playStory, prewarmShaders, stepPrewarm, applyQuality, autoQuality, quality, warmQueue, warmLog, startCampaign, onPlay, assetsReady: () => assetsReady });
+window.__CS = () => ({ S, enemies, waves, arena, weapon, scene, camera, world, bolts, startLevel, hitTest, ray, panel, restartRun, travel: () => travel, player: () => PLAYER.clone(), story, playStory, prewarmShaders, stepPrewarm, applyQuality, autoQuality, quality, warmQueue, warmLog, startCampaign, onPlay, assetsReady: () => assetsReady });

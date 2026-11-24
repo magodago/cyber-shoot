@@ -1060,677 +1060,412 @@ export class Sentry extends Enemy {
 // ---------------------------------------------------------------------- jefe
 // ---------------------------------------------------------------------- jefe
 export class Boss extends Enemy {
+  /* Nave nodriza: ya no es un gigante que camina hacia ti. Es una cañonera
+     que entra desde el fondo, orbita, hace pasadas de fuego y se retira para
+     recargar el escudo. Cuando el escudo está caído, el núcleo del vientre
+     queda expuesto y es el único punto donde el plomo entra de verdad. */
   constructor(world, node, def) {
     super(world, node, def);
     this.phase = 1;
-    this.summoned = [false, false];
-    // Blindaje del titán: el pecho es chapa, no papel. Las zonas de impacto
-    // siguen siendo las mismas, pero el daño se reinterpreta aquí: solo el
-    // núcleo, y solo mientras está expuesto, paga de verdad.
     this.coreOpen = false;
-    this.ventT = 0;      // segundos que le quedan al núcleo abierto
-    this.invulnT = 0;    // blindaje corto al cambiar de fase
-    // Barrido de reactor: el titán se ancla, carga y barre con un haz continuo
-    // que hay que romper de línea de visión. Es el giro del combate: ya no vale
-    // quedarse plantado disparando, hay que esconderse y salir al hueco.
-    this.searT = 0;
-    this.searCd = 10;
-    this.searDur = 3.7;
-    this.searCue = false;
-    this.beamAim = null;
-    this.beamHitT = 0;
-    // OJO: el mesh lo crea _build(), y super() ya lo ha ejecutado antes de
-    // llegar aquí. Poner this.beam = null borraba el haz recién creado y el
-    // barrido se quedaba sin rayo visible.
-    if (this.beam === undefined) this.beam = null;
-  }
-
-  // Ametrallar el pecho ya no es la solución: la coraza se come el daño y
-  // devuelve chispas. El premio está en la cabeza y en el núcleo abierto.
-  hit(point, mult, dmg) {
-    if (this.state === 'die' || this.dead) return false;
-    if (this.invulnT > 0) {
-      if (this.world.fx) this.world.fx.spark(point, 0x49e6ff, 6, 3.4, 0.2, 0.07);
-      return false;
-    }
-    let m;
-    if (mult === 2.6) m = this.coreOpen ? 3.4 : 0.06;  // núcleo: solo paga abierto
-    else if (mult > 1) m = 1.9;                        // cabeza: premio a la puntería
-    else m = 0.35;                                     // cuerpo, brazos, piernas
-    if (m < 1 && this.world.fx) this.world.fx.spark(point, 0xc8d2dc, 4, 2.6, 0.16, 0.06);
-    return super.hit(point, m, dmg);
-  }
-
-  _coolT() {
-    const base = this.def.cool || 2.4;
-    return base * (this.phase >= 3 ? 0.62 : this.phase === 2 ? 0.8 : 1);
-  }
-
-  _openVent(sec) {
-    this.ventT = sec;
-    this.coreOpen = true;
-    if (this.world.fx) {
-      const p = this.core ? this.core.getWorldPosition(new THREE.Vector3()) : this.group.position.clone();
-      this.world.fx.ring(p, 0xffe066, 1.6, 0.45);
-    }
-  }
-
-  _closeVent() {
-    if (this.coreOpen && this.world.fx) {
-      const p = this.core ? this.core.getWorldPosition(new THREE.Vector3()) : this.group.position.clone();
-      this.world.fx.ring(p, 0x49e6ff, 1.1, 0.3);
-    }
     this.ventT = 0;
-    this.coreOpen = false;
-  }
-
-  _ventTick(dt, t) {
-    this.invulnT = Math.max(0, this.invulnT - dt);
-    if (this.ventT > 0) {
-      this.ventT = Math.max(0, this.ventT - dt);
-      if (this.ventT === 0) this._closeVent();
-    }
-    const open = this.ventT > 0;
-    const shielded = this.invulnT > 0;
-    const col = open ? 0xffe066 : shielded ? 0x49e6ff : 0x7a1024;
-    if (this.core) {
-      this.core.material.color.setHex(col);
-      if (open) this.core.scale.setScalar(1.3 + Math.sin(t * 16) * 0.2);
-    }
-    if (this.halo) {
-      this.halo.material.color.setHex(col);
-      this.halo.material.opacity = open ? 0.95 : shielded ? 0.7 : 0.4;
-      if (open) this.halo.scale.setScalar(4.4 + Math.sin(t * 13) * 0.5);
-    }
-    if (this.coreLight) {
-      this.coreLight.color.setHex(col);
-      if (open) this.coreLight.intensity = 190 + Math.sin(t * 15) * 55;
-      else if (shielded) this.coreLight.intensity = 130 + Math.sin(t * 8) * 30;
-    }
+    this.invulnT = 0;
+    this.fireT = 2.0;
+    this.runT = 3.0;
+    this.run = 'enter';
+    this.orbA = Math.PI * 0.5 * (Math.random() < 0.5 ? 1 : -1);
+    this.orbDir = Math.random() < 0.5 ? -1 : 1;
+    this.rad = 20;
+    this.radTarget = 18;
+    this.bank = 0;
+    this.pitch = 0;
+    this.burstLeft = 0;
+    this.burstT = 0;
+    this.ramT = 0;
+    this.turretYaw = 0;
+    this.hitFlash = 0;
+    this._vx = 0;
+    this._vz = 0;
+    this.muzzle = this.turretMuzzles ? this.turretMuzzles[0] : new THREE.Object3D();
   }
 
   _build() {
-    // Paleta militar: acero gastado, latón sucio y brasas de reactor.
-    // El blanco nuclear y el dorado brillante eran la razón de que pareciese
-    // un juguete; ahora la silueta es la de una máquina de asedio.
-    const hull = this._mat(stdMat(0x7b8899, 0.85, 0.44));
-    const plate = this._mat(stdMat(0xb07a2c, 0.8, 0.4));
-    const dark = this._mat(stdMat(0x59636f, 0.9, 0.5));
-    const steel = this._mat(stdMat(0xaeb9c7, 0.8, 0.42));
-    const accent = this._mat(new THREE.MeshBasicMaterial({ color: 0xff2d55, toneMapped: false }));
-    const trim = this._mat(new THREE.MeshBasicMaterial({ color: 0xffa63d, toneMapped: false }));
-    const cool = this._mat(new THREE.MeshBasicMaterial({ color: 0x49e6ff, toneMapped: false }));
+    const plate = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x2a3342, metalness: 0.92, roughness: 0.34, flatShading: true
+    }));
+    const dark = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x0d1119, metalness: 0.8, roughness: 0.55, flatShading: true
+    }));
+    const trim = this._mat(new THREE.MeshStandardMaterial({
+      color: 0xff9f43, metalness: 0.7, roughness: 0.3,
+      emissive: 0xff6a00, emissiveIntensity: 0.55
+    }));
+    const glow = this._mat(new THREE.MeshBasicMaterial({
+      color: 0x9fe8ff, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
+    const coreMat = this._mat(new THREE.MeshBasicMaterial({
+      color: 0xff7a1a, transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
+    const domeMat = this._mat(new THREE.MeshBasicMaterial({
+      color: 0x49e6ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    }));
 
-    // cajas con canto biselado: el titán tenía aristas vivas de bloque de CAD
-    const rbox = (w, h, d, r = 0.04) => roundBox(w, h, d, r);
-    const mk = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = null) => {
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
       m.rotation.set(rx, ry, rz);
-      (parent || this.group).add(m);
+      this.group.add(m);
       return m;
     };
 
-    // ---------------------------------------------------------- piernas
-    for (const s of [-1, 1]) {
-      const leg = new THREE.Group();
-      leg.position.set(s * 1.02, 0, 0);
-      this.group.add(leg);
-
-      mk(rbox(0.78, 1.05, 0.86), dark, 0, 1.55, 0.05, 0, 0, 0, leg);
-      mk(rbox(0.92, 0.34, 1.0), hull, 0, 2.02, 0.02, 0.12, 0, 0, leg);
-      mk(rbox(0.68, 0.52, 0.76), hull, 0, 1.86, 0.16, -0.2, 0, 0, leg);
-      mk(new THREE.CylinderGeometry(0.13, 0.13, 1.0, 8), steel, s * 0.42, 1.5, 0.42, 0.18, 0, 0, leg);
-      mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, 0.92, 0.02);
-      mk(new THREE.ConeGeometry(0.16, 0.52, 5), steel, 0, 0.92, -0.36, -Math.PI / 2.2, 0, 0, leg);
-      mk(rbox(0.56, 1.0, 0.62), hull, 0, 0.45, 0.04, 0, 0, 0, leg);
-      mk(rbox(0.7, 0.3, 0.7), plate, 0, 0.2, -0.02, 0, 0, 0, leg);
-      mk(rbox(1.02, 0.3, 1.42), dark, 0, -0.28, -0.12, 0, 0, 0, leg);
-      mk(rbox(0.86, 0.16, 0.4), steel, 0, -0.4, -0.74, 0.12, 0, 0, leg);
-      for (let i = -1; i <= 1; i++) {
-        mk(new THREE.ConeGeometry(0.1, 0.44, 5), steel, i * 0.3, -0.44, -0.98, -Math.PI / 2, 0, 0, leg);
-      }
-      mk(new THREE.TorusGeometry(0.2, 0.05, 6, 14), trim, 0, 0.9, 0.3, 0, 0, 0, leg);
-      mk(rbox(0.07, 0.9, 0.07), accent, s * 0.37, 1.5, -0.36, 0, 0, 0, leg);
+    /* --- casco: cuña alargada, morro afilado, paneles escalonados --- */
+    add(new THREE.CylinderGeometry(0.9, 1.5, 4.6, 6, 1), plate, 0, 0, 0, Math.PI / 2, 0, Math.PI / 6);
+    add(new THREE.CylinderGeometry(0.62, 0.9, 1.5, 6, 1), plate, 0, 0.02, -2.55, Math.PI / 2, 0, Math.PI / 6);
+    add(new THREE.ConeGeometry(0.62, 1.1, 6), trim, 0, 0.02, -3.75, -Math.PI / 2, 0, 0);
+    // dorso blindado y quilla
+    add(new THREE.BoxGeometry(1.5, 0.34, 3.6), dark, 0, 0.62, 0.1);
+    add(new THREE.BoxGeometry(0.9, 0.22, 2.2), plate, 0, 0.86, 0.35);
+    add(new THREE.BoxGeometry(1.15, 0.3, 2.4), dark, 0, -0.62, 0.15);
+    // costillas / líneas de panel
+    for (let i = 0; i < 4; i++) {
+      add(new THREE.BoxGeometry(1.7 - i * 0.12, 0.06, 0.09), trim, 0, 0.55, -1.2 + i * 0.85);
+    }
+    // entradas de aire laterales
+    for (const sd of [-1, 1]) {
+      add(new THREE.BoxGeometry(0.1, 0.36, 1.1), dark, sd * 1.24, 0.05, -0.9);
+      add(new THREE.BoxGeometry(0.06, 0.2, 0.86), trim, sd * 1.29, 0.05, -0.9);
     }
 
-    // ---------------------------------------------------------- cadera
-    mk(rbox(2.0, 0.62, 1.18), dark, 0, 2.4, 0);
-    for (const s of [-1, 1]) {
-      mk(rbox(1.0, 0.78, 0.18), plate, s * 0.62, 2.02, -0.62, 0.3, 0, s * 0.06);
-      mk(rbox(0.86, 0.56, 0.16), hull, s * 1.04, 2.12, 0.56, -0.2, s * 0.42, 0);
-    }
-    mk(rbox(0.42, 0.86, 0.16), trim, 0, 2.0, -0.66, 0.3, 0, 0);
-
-    // ---------------------------------------------------------- torso
-    this.bust = new THREE.Group();
-    this.bust.position.set(0, 2.72, 0);
-    this.group.add(this.bust);
-    const bust = this.bust;
-
-    mk(rbox(2.5, 1.5, 1.4), hull, 0, 0.3, 0, 0.06, 0, 0, bust);
-    mk(rbox(2.16, 0.6, 1.18), dark, 0, 1.0, 0.18, -0.16, 0, 0, bust);
-    mk(rbox(1.36, 1.0, 0.3), plate, 0, 0.34, -0.72, 0.02, 0, 0, bust);
-    for (const s of [-1, 1]) {
-      mk(rbox(0.56, 0.96, 0.26), dark, s * 0.96, 0.4, -0.6, 0, s * 0.28, 0, bust);
-      for (let r = 0; r < 2; r++) {
-        mk(new THREE.TorusGeometry(0.58 - r * 0.1, 0.05, 6, 16, Math.PI * 1.05), steel,
-          s * 0.4, 0.52 - r * 0.36, -0.68, Math.PI / 2, 0, s * 0.55, bust);
-      }
-      mk(rbox(0.1, 1.2, 0.1), cool, s * 1.17, 0.34, -0.5, 0, 0, 0, bust);
-      // omóplatos dentados
-      mk(new THREE.ConeGeometry(0.16, 0.5, 5), plate, s * 0.8, 1.1, 0.55, Math.PI / 2.6, 0, s * 0.3, bust);
-    }
-    for (let i = 0; i < 5; i++) {
-      mk(new THREE.ConeGeometry(0.16, 0.64 - i * 0.07, 5), i < 2 ? plate : steel,
-        0, 0.66 + i * 0.32, 0.84 - i * 0.06, Math.PI / 2.5, 0, 0, bust);
+    /* --- alas en flecha con pods de misiles --- */
+    for (const sd of [-1, 1]) {
+      const wing = new THREE.Group();
+      wing.position.set(sd * 1.15, 0.05, 0.35);
+      wing.rotation.y = sd * 0.42;
+      wing.rotation.z = sd * -0.12;
+      this.group.add(wing);
+      const wAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z); m.rotation.set(rx, ry, rz); wing.add(m); return m;
+      };
+      wAdd(new THREE.BoxGeometry(2.1, 0.13, 1.5), plate, sd * 0.95, 0, 0.1);
+      wAdd(new THREE.BoxGeometry(1.1, 0.1, 0.7), dark, sd * 2.0, 0.02, 0.28);
+      wAdd(new THREE.BoxGeometry(0.16, 0.05, 1.2), trim, sd * 0.55, 0.09, 0.05);
+      // pod de misiles
+      wAdd(new THREE.CylinderGeometry(0.2, 0.2, 1.0, 8), dark, sd * 1.8, -0.1, -0.35, Math.PI / 2, 0, 0);
+      wAdd(new THREE.CircleGeometry(0.19, 8), trim, sd * 1.8, -0.1, -0.86, 0, Math.PI, 0);
+      // aleta vertical de punta
+      wAdd(new THREE.BoxGeometry(0.07, 0.62, 0.6), plate, sd * 2.45, 0.3, 0.35);
     }
 
-    // núcleo con jaula
-    const cy = 0.42;
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.5, 24, 18), new THREE.MeshBasicMaterial({
-      color: 0xff2d55, toneMapped: false
-    }));
-    this.core.position.set(0, cy, -0.8);
-    bust.add(this.core);
-    this._mat(this.core.material);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      mk(rbox(0.09, 1.16, 0.09), steel, Math.cos(a) * 0.72, cy, -0.84 + Math.sin(a) * 0.28, 0, 0, 0, bust);
-    }
-    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: TEX.glow, color: 0xff2d55, transparent: true, opacity: 0.85,
-      blending: THREE.AdditiveBlending, depthWrite: false
-    }));
-    this.halo.position.set(0, cy, -1.0);
-    this.halo.scale.setScalar(3.4);
-    bust.add(this.halo);
-    this.coreLight = new THREE.PointLight(0xff2d55, 110, 26, 2);
-    this.coreLight.position.set(0, cy, -1.6);
-    bust.add(this.coreLight);
+    /* --- cabina / sensores --- */
+    const canopy = add(new THREE.SphereGeometry(0.58, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      this._mat(new THREE.MeshStandardMaterial({
+        color: 0x0a2634, metalness: 1, roughness: 0.08,
+        emissive: 0x1d6f8c, emissiveIntensity: 0.6
+      })), 0, 0.5, -1.35);
+    canopy.scale.set(1, 0.8, 1.7);
+    add(new THREE.TorusGeometry(0.42, 0.05, 6, 14), trim, 0, 0.42, -2.2, Math.PI / 2 - 0.25, 0, 0);
+    // ojo sensor frontal
+    const eye = add(new THREE.SphereGeometry(0.2, 10, 8), glow, 0, 0.24, -2.85);
+    eye.scale.set(1, 0.55, 0.6);
+    this.eye = eye;
 
-    // ---------------------------------------------------------- cabeza
-    const head = new THREE.Group();
-    head.position.set(0, 1.44, -0.1);
-    bust.add(head);
-    mk(rbox(0.88, 0.64, 0.88), hull, 0, 0, 0, 0, 0, 0, head);
-    mk(rbox(0.68, 0.44, 0.52), dark, 0, -0.08, -0.54, 0.12, 0, 0, head);
-    mk(rbox(0.62, 0.2, 0.18), steel, 0, 0.17, -0.52, 0, 0, 0, head);
-    mk(rbox(0.62, 0.22, 0.48), plate, 0, -0.3, -0.44, 0.1, 0, 0, head);
-    for (let i = -3; i <= 3; i++) {
-      mk(new THREE.ConeGeometry(0.045, 0.2, 4), steel, i * 0.085, -0.16, -0.64, Math.PI, 0, 0, head);
-      mk(new THREE.ConeGeometry(0.04, 0.16, 4), steel, i * 0.085, -0.36, -0.62, 0, 0, 0, head);
-    }
-    for (const s of [-1, 1]) {
-      mk(rbox(0.24, 0.055, 0.07), accent, s * 0.2, 0.02, -0.46, 0, 0, s * 0.24, head);
-      mk(new THREE.SphereGeometry(0.05, 8, 8), trim, s * 0.31, 0.2, -0.44, 0, 0, 0, head);
-      let hx = s * 0.38, hy = 0.3, hz = 0.1, rx = -0.5;
-      for (let i = 0; i < 3; i++) {
-        mk(new THREE.ConeGeometry(0.14 - i * 0.032, 0.44, 6), i === 2 ? plate : steel,
-          hx, hy, hz, rx, 0, s * 0.18, head);
-        hy += 0.3; hz += 0.25; hx += s * 0.05; rx -= 0.24;
-      }
-      mk(new THREE.ConeGeometry(0.07, 0.34, 5), steel, s * 0.44, -0.1, 0.02, 0, 0, s * 1.05, head);
-    }
-    for (let i = 0; i < 3; i++) {
-      mk(new THREE.ConeGeometry(0.1, 0.38, 4), dark, 0, 0.34, 0.24 + i * 0.16, -0.32, 0, 0, head);
-    }
-    this.addHit(hitbox(0.58, 2.8, this, 'head', 4.16, 1.0));
-    this.bodyHit = this.addHit(hitbox(1.42, 0.35, this, 'body', 3.0, 1.25));
-    this.coreHit = this.addHit(hitbox(0.52, 2.6, this, 'core', 3.14));
-
-    // ---------------------------------------------------------- hombros y cañones
-    this.cannons = [];
-    for (const s of [-1, 1]) {
-      const sh = new THREE.Group();
-      sh.position.set(s * 1.55, 0.94, 0.02);
-      bust.add(sh);
-      mk(new THREE.SphereGeometry(0.42, 14, 12), dark, 0, 0, 0, 0, 0, 0, sh);
-      mk(rbox(1.12, 0.42, 1.06), plate, s * 0.12, 0.26, 0, 0, 0, s * 0.16, sh);
-      mk(rbox(0.94, 0.34, 0.96), hull, s * 0.2, 0.56, 0.02, 0, 0, s * 0.26, sh);
-      mk(rbox(0.72, 0.28, 0.8), dark, s * 0.26, 0.84, 0.04, 0, 0, s * 0.34, sh);
-      for (let i = -1; i <= 1; i++) {
-        mk(new THREE.ConeGeometry(0.11, 0.56 + Math.abs(i) * 0.1, 5), steel,
-          s * (0.34 + i * 0.24), 1.02 - Math.abs(i) * 0.1, 0.2, -0.32, 0, s * 0.5, sh);
-      }
-      const gun = new THREE.Group();
-      gun.position.set(s * 0.08, 0.1, -0.6);
-      sh.add(gun);
-      mk(rbox(0.64, 0.52, 0.52), dark, 0, 0, 0.14, 0, 0, 0, gun);
-      for (let b = -1; b <= 1; b++) {
-        mk(new THREE.CylinderGeometry(0.1, 0.12, 1.4, 8), steel, b * 0.21, 0, -0.66, Math.PI / 2, 0, 0, gun);
-        const ring = mk(new THREE.TorusGeometry(0.13, 0.03, 6, 12), accent, b * 0.21, 0, -1.32, 0, 0, 0, gun);
-        this.cannons.push(ring);
-      }
-      for (let f = 0; f < 4; f++) {
-        mk(rbox(0.04, 0.32, 0.52), steel, s * (0.32 + f * 0.06), 0.08, -0.26, 0, 0, 0, gun);
-      }
+    /* --- torretas gemelas bajo el morro --- */
+    this.turrets = [];
+    this.turretMuzzles = [];
+    for (const sd of [-1, 1]) {
+      const tg = new THREE.Group();
+      tg.position.set(sd * 1.05, -0.52, -1.05);
+      this.group.add(tg);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.22, 8), dark);
+      tg.add(base);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.4), plate);
+      yoke.position.y = -0.22; tg.add(yoke);
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 1.25, 8), dark);
+      bar.rotation.x = Math.PI / 2; bar.position.set(0, -0.28, -0.42); tg.add(bar);
+      const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.16, 8), trim);
+      tip.rotation.x = Math.PI / 2; tip.position.set(0, -0.28, -1.0); tg.add(tip);
+      const mz = new THREE.Object3D();
+      mz.position.set(0, -0.28, -1.12);
+      tg.add(mz);
+      this.turrets.push(tg);
+      this.turretMuzzles.push(mz);
     }
 
-    // ---------------------------------------------------------- brazos con garras
-    this.arms = [];
-    for (const s of [-1, 1]) {
-      const arm = new THREE.Group();
-      arm.position.set(s * 1.88, 0.7, 0.02);
-      bust.add(arm);
-      mk(new THREE.CylinderGeometry(0.26, 0.32, 1.05, 10), hull, 0, -0.55, 0, 0, 0, s * 0.08, arm);
-      mk(new THREE.SphereGeometry(0.3, 12, 10), plate, 0, -1.12, 0.02, 0, 0, 0, arm);
-      mk(rbox(0.6, 0.88, 0.64), dark, s * 0.06, -1.62, -0.04, 0.1, 0, 0, arm);
-      mk(rbox(0.52, 0.42, 0.68), hull, s * 0.1, -1.98, -0.08, 0.1, 0, 0, arm);
-      for (let c = -1; c <= 1; c++) {
-        mk(new THREE.ConeGeometry(0.09, 0.58, 5), steel, s * 0.1 + c * 0.17, -2.36, -0.2, -0.38, c * 0.2, 0, arm);
-      }
-      mk(rbox(0.1, 0.72, 0.14), accent, s * 0.35, -1.58, 0.02, 0.1, 0, 0, arm);
-      this.arms.push(arm);
-    }
-
-    // ---------------------------------------------------------- reactores
+    /* --- motores: tres toberas con llama viva --- */
     this.flames = [];
-    for (const s of [-1, 1]) {
-      const st = new THREE.Group();
-      st.position.set(s * 0.78, 0.86, 0.72);
-      bust.add(st);
-      for (let i = 0; i < 3; i++) {
-        mk(new THREE.CylinderGeometry(0.16 - i * 0.02, 0.2, 0.62, 8), i === 1 ? plate : dark,
-          0, 0.34 + i * 0.44, 0, 0.12, 0, 0, st);
-        mk(new THREE.TorusGeometry(0.19, 0.03, 5, 12), cool, 0, 0.64 + i * 0.44, 0, Math.PI / 2, 0, 0, st);
-      }
-      const flame = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: TEX.glow, color: 0x49e6ff, transparent: true, opacity: 0.7,
-        blending: THREE.AdditiveBlending, depthWrite: false
-      }));
-      flame.position.set(0, 1.75, 0.08);
-      flame.scale.set(1.1, 2.3, 1);
-      st.add(flame);
-      this.flames.push(flame);
+    for (let i = 0; i < 3; i++) {
+      const x = (i - 1) * 0.72;
+      add(new THREE.CylinderGeometry(0.34, 0.42, 0.7, 10), dark, x, 0.02, 2.35, Math.PI / 2, 0, 0);
+      add(new THREE.TorusGeometry(0.36, 0.05, 6, 12), trim, x, 0.02, 2.7);
+      const fl = new THREE.Mesh(
+        new THREE.ConeGeometry(0.28, 1.9, 8, 1, true),
+        this._mat(new THREE.MeshBasicMaterial({
+          color: 0x54d8ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+        }))
+      );
+      fl.rotation.x = -Math.PI / 2;
+      fl.position.set(x, 0.02, 3.6);
+      this.group.add(fl);
+      this.flames.push(fl);
+      const fg = new THREE.PointLight(0x49c8ff, 1.4, 9, 2);
+      fg.position.set(x, 0.02, 3.1);
+      this.group.add(fg);
     }
 
-    // ---------------------------------------------------------- esquirlas orbitales
-    this.shards = [];
-    for (let i = 0; i < 8; i++) {
-      const sh = new THREE.Mesh(new THREE.TetrahedronGeometry(0.16), i % 2 ? trim : accent);
-      bust.add(sh);
-      this.shards.push(sh);
-    }
-    this.orbs = [];
-    for (const r of [1.02, 1.28]) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.022, 4, 40), r > 1.1 ? cool : accent);
-      ring.position.set(0, 0.42, -0.82);
-      bust.add(ring);
-      this.orbs.push(ring);
-    }
+    /* --- núcleo del vientre: el punto débil, oculto tras el escudo --- */
+    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 10), coreMat);
+    this.core.position.set(0, -0.82, -0.2);
+    this.core.scale.set(1, 0.85, 1);
+    this.group.add(this.core);
+    this.coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.07, 8, 20), trim);
+    this.coreRing.position.set(0, -0.85, -0.2);
+    this.coreRing.rotation.x = Math.PI / 2;
+    this.group.add(this.coreRing);
+    this.coreLight = new THREE.PointLight(0xff7a1a, 0.6, 7, 2);
+    this.coreLight.position.set(0, -0.9, -0.2);
+    this.group.add(this.coreLight);
 
-    // ---------------------------------------------------------- suelo
-    this.hazard = new THREE.Mesh(
-      new THREE.RingGeometry(1.75, 3.4, 48),
-      new THREE.MeshBasicMaterial({
-        color: 0xff2d55, transparent: true, opacity: 0.3,
-        blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false
-      })
-    );
-    this.hazard.rotation.x = -Math.PI / 2;
-    this.hazard.position.y = -0.52;
-    this.group.add(this.hazard);
-
-    // Haz del barrido: cilindro estirado en el mundo (no hijo del grupo) para
-    // que la longitud sea real y no herede la escala del titán.
-    this.beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(1, 1, 1, 10, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xffe066, transparent: true, opacity: 0.9,
+    /* --- escudo: cúpula de energía + retícula --- */
+    this.dome = new THREE.Mesh(new THREE.SphereGeometry(4.1, 20, 14), domeMat);
+    this.dome.position.set(0, 0, 0.2);
+    this.dome.scale.set(1.35, 0.72, 1.5);
+    this.group.add(this.dome);
+    this.domeGrid = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(4.16, 1),
+      this._mat(new THREE.MeshBasicMaterial({
+        color: 0x49e6ff, wireframe: true, transparent: true, opacity: 0.16,
         blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
-      })
+      }))
     );
-    this.beam.visible = false;
-    this.beam.frustumCulled = false;
-    this.beam.scale.set(0.5, 34, 0.5);
-    this.world.scene.add(this.beam);
+    this.domeGrid.position.copy(this.dome.position);
+    this.domeGrid.scale.copy(this.dome.scale);
+    this.group.add(this.domeGrid);
 
-    this.muzzle.position.set(0, 3.2, -1.7);
-    this.charge.position.copy(this.muzzle.position);
-    this.charge.scale.setScalar(2);
-
-    // luces de estudio: sin ellas el chasis se lee como una masa negra
-    const key = new THREE.PointLight(0xffd2a8, 480, 50, 2);
-    key.position.set(-3.6, 7.4, -7.0);
-    this.group.add(key);
-    const rim = new THREE.PointLight(0x49e6ff, 560, 56, 2);
-    rim.position.set(4.0, 8.8, 5.8);
-    this.group.add(rim);
-    const under = new THREE.PointLight(0xff2d55, 220, 22, 2);
-    under.position.set(0, 0.8, -2.5);
-    this.group.add(under);
-    this.keyLight = key;
-    this.rimLight = rim;
-
-    // franjas encendidas en las costillas: leen la silueta a 30 m
-    for (const y of [0.06, 0.86]) {
-      mk(rbox(2.3, 0.07, 0.09), trim, 0, 3.72 + y, -1.14, 0, 0, 0);
-    }
-
-    // apoyo en el suelo: la caja real del titán baja varios metros del origen, así
-    // que sin este desplazamiento media máquina quedaba enterrada. Se mide en
-    // espacio LOCAL de la pieza (la escala del grupo se aplica al usarlo) para
-    // que siga siendo correcto si la escala se fija después de construir.
-    this.group.updateMatrixWorld(true);
-    {
-      const inv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
-      const m4 = new THREE.Matrix4();
-      let minLocalY = Infinity;
-      this.group.traverse((o) => {
-        if (!o.isMesh || !o.geometry) return;
-        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-        const box = o.geometry.boundingBox.clone().applyMatrix4(m4.multiplyMatrices(inv, o.matrixWorld));
-        if (box.min.y < minLocalY) minLocalY = box.min.y;
-      });
-      this.liftLocal = Number.isFinite(minLocalY) ? Math.max(0, -minLocalY + 0.02) : 0;
-    }
+    /* --- cajas de impacto --- */
+    this.addHit(hitbox(1.5, 1, this, 'hull', 0.15, 1.0, -0.1));
+    this.addHit(hitbox(0.9, 2.6, this, 'core', -0.78, 0.85, -0.2));
+    this.muzzle = this.turretMuzzles[0];
+    this.liftLocal = 0;
   }
 
-  _idle(dt, t) {
-    this.group.position.y = this.node.pos.y + this._liftY() + Math.sin(t * 1.1) * 0.05;
-    this.group.rotation.z = Math.sin(t * 0.7) * 0.008;
-    const col = this.phase === 1 ? 0xff2d55 : this.phase === 2 ? 0xff9f43 : 0xffe066;
-    // respiración del torso y vaivén de brazos: rompe la pose de estatua
-    if (this.bust) {
-      this.bust.position.y = 2.72 + Math.sin(t * 1.25) * 0.045;
-      this.bust.rotation.x = Math.sin(t * 1.25 + 0.6) * 0.014;
-    }
-    if (this.arms) {
-      for (let i = 0; i < this.arms.length; i++) {
-        const s = i === 0 ? -1 : 1;
-        this.arms[i].rotation.x = Math.sin(t * 0.9 + i * 1.7) * 0.09;
-        this.arms[i].rotation.z = s * (0.06 + Math.sin(t * 0.7 + i) * 0.05);
-      }
-    }
-    // esquirlas orbitando el reactor
-    if (this.shards) {
-      for (let i = 0; i < this.shards.length; i++) {
-        const a = t * 1.15 + (i / this.shards.length) * Math.PI * 2;
-        const r = 1.35 + Math.sin(t * 2 + i) * 0.12;
-        this.shards[i].position.set(Math.cos(a) * r, 0.42 + Math.sin(a * 2 + i) * 0.5, -0.8 + Math.sin(a) * r * 0.45);
-        this.shards[i].rotation.set(t * 1.7 + i, t * 1.2, 0);
-        this.shards[i].material.color.setHex(col);
-      }
-    }
-    if (this.orbs) {
-      this.orbs[0].rotation.z += dt * (this.phase > 1 ? 2.4 : 1.2);
-      this.orbs[1].rotation.z -= dt * (this.phase > 2 ? 3.1 : 1.7);
-      this.orbs[0].material.color.setHex(col);
-    }
-    if (this.flames) {
-      for (let i = 0; i < this.flames.length; i++) {
-        const f = this.flames[i];
-        const k = 0.85 + Math.sin(t * 9 + i * 2) * 0.15;
-        f.scale.set(1.1 * k, 2.3 * k * (this.phase > 1 ? 1.25 : 1), 1);
-        f.material.opacity = 0.55 + Math.sin(t * 11 + i) * 0.2;
-      }
-    }
-    if (this.core) {
-      const pulse = 0.86 + Math.sin(t * 4) * 0.14;
-      this.core.scale.setScalar(pulse);
-      this.core.material.color.setHex(col);
-    }
-    if (this.halo) {
-      this.halo.scale.setScalar(2.9 + Math.sin(t * 3.2) * 0.5);
-      this.halo.material.color.setHex(col);
-    }
-    if (this.coreLight) {
-      this.coreLight.color.setHex(col);
-      this.coreLight.intensity = (this.phase > 1 ? 85 : 62) + Math.sin(t * 3.2) * 24;
-    }
-    if (this.hazard) {
-      this.hazard.material.opacity = 0.2 + Math.sin(t * 2.4) * 0.11;
-      this.hazard.rotation.z += dt * 0.6;
-    }
-    for (let i = 0; i < this.cannons.length; i++) {
-      this.cannons[i].rotation.z += dt * (this.phase > 1 ? 6 : 3);
-    }
-    // fases
-    const frac = this.hp / this.maxHp;
-    if (this.phase === 1 && frac <= 0.66) this._phase(2);
-    if (this.phase === 2 && frac <= 0.33) this._phase(3);
-  }
+  _liftY() { return 0; }
 
+  /* --- fase por vida: la nave se pone más agresiva --- */
   _phase(p) {
+    if (this.dead) return;
+    p = Math.max(1, Math.min(3, p));
+    if (p === this.phase && this.phaseT !== undefined) return;
     this.phase = p;
-    this.aimTime = Math.max(0.7, this.aimTime * 0.85);
-    this.burstCount = p === 2 ? 5 : 6;
-    this.spreadNow = 1.5;
-    // Al romperse la coraza se rearma: 1,1 s en los que no entra daño. Evita
-    // que un cargador guardado para el cambio de fase se salte una entera.
-    this.state = 'cool';
-    this.st = 0;
+    this.phaseT = 0;
     this.invulnT = 1.1;
-    this._closeVent();
+    this.coreOpen = false;
     this.ventT = 0;
+    this.run = 'retreat';
+    this.runT = 2.2;
+    this.radTarget = 22;
+    this.burstLeft = 0;
     if (this.world.fx) {
-      const p3 = this.group.position.clone().add(new THREE.Vector3(0, 2.4, 0));
-      this.world.fx.ring(p3, 0xff9f43, 4.5, 0.9);
-      this.world.fx.spark(p3, 0xffe066, 30, 8, 0.9, 0.2);
+      const pos = this.group.position.clone();
+      this.world.fx.ring(pos, 0x49e6ff, 7, 0.9);
+      this.world.fx.ring(pos, 0xff9f43, 4.5, 0.7);
+      this.world.fx.spark(pos, 0x9fe8ff, 26, 7, 0.9, 0.24);
     }
-    if (this.world.audio && this.world.audio.explode) this.world.audio.explode();
     if (this.def.onPhase) this.def.onPhase(this, p);
   }
 
-  // El titán no es una torreta: se desplaza, esquiva en línea y, desde la
-  // fase 2, encadena anillos de proyectiles que obligan a moverse.
-  _liftY() {
-    return (this.liftLocal || 0) * (this.group.scale.y || 1);
+  _idle(dt, t) {
+    // llama de motores y pulso del núcleo
+    const kick = 0.82 + Math.sin(t * 22 + this.phase) * 0.08 + (this.run === 'dive' ? 0.35 : 0);
+    if (this.flames) {
+      for (let i = 0; i < this.flames.length; i++) {
+        const f = this.flames[i];
+        f.scale.set(0.9 + kick * 0.12, 0.75 + kick * 0.5, 0.9 + kick * 0.12);
+        f.material.opacity = 0.5 + kick * 0.3;
+      }
+    }
+    if (this.core) {
+      const open = this.coreOpen && this.ventT > 0;
+      const s = open ? 1.28 + Math.sin(t * 12) * 0.14 : 0.9;
+      this.core.scale.set(s, s * 0.85, s);
+      this.core.material.opacity = open ? 0.95 : 0.55;
+      if (this.coreLight) this.coreLight.intensity = open ? 2.4 + Math.sin(t * 14) * 0.6 : 0.45;
+      if (this.coreRing) this.coreRing.rotation.z += dt * (open ? 4.5 : 1.2);
+    }
+    if (this.dome && this.domeGrid) {
+      const up = !(this.coreOpen && this.ventT > 0);
+      this.dome.visible = up;
+      this.domeGrid.visible = up;
+      if (up) {
+        const o = 0.1 + Math.abs(Math.sin(t * 1.6)) * 0.06 + (this.invulnT > 0 ? 0.1 : 0);
+        this.dome.material.opacity = o;
+        this.domeGrid.material.opacity = 0.12 + (this.invulnT > 0 ? 0.12 : 0);
+        this.domeGrid.rotation.y += dt * 0.35;
+        this.domeGrid.rotation.x += dt * 0.12;
+      }
+    }
+    if (this.eye) this.eye.material.opacity = 0.55 + Math.abs(Math.sin(t * 3.4)) * 0.4;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+  }
+
+  _ai(dt, t) {
+    this._move(dt, t);
+
+    // umbrales de fase (una sola vez cada uno)
+    const frac = this.hp / this.maxHp;
+    const want = frac > 0.68 ? 1 : frac > 0.34 ? 2 : 3;
+    if (want > this.phase) this._phase(want);
+
+    if (this.invulnT > 0) this.invulnT -= dt;
+    if (this.ventT > 0) {
+      this.ventT -= dt;
+      if (this.ventT <= 0) { this.coreOpen = false; this.burstLeft = 0; }
+    }
+
+    // reloj de maniobra: pasada de ataque -> retirada con núcleo al aire
+    this.runT -= dt;
+    if (this.runT <= 0) {
+      if (this.run === 'dive') {
+        this.run = 'retreat';
+        this.runT = this.phase === 3 ? 3.4 : 4.2;
+        this.radTarget = 21;
+        this.coreOpen = true;
+        this.ventT = this.runT - 0.6;
+        this.burstLeft = 0;
+      } else {
+        this.run = 'dive';
+        this.runT = this.phase === 3 ? 5.2 : 4.2;
+        this.radTarget = 10.5;
+        this.coreOpen = false;
+        this.ventT = 0;
+        this.burstLeft = this.phase === 3 ? 8 : 6;
+        this.burstT = 0.2;
+        this.orbDir = Math.random() < 0.5 ? -1 : 1;
+      }
+    }
+
+    // fuego: ráfagas dobles desde las torretas
+    if (this.run === 'dive' && this.burstLeft > 0) {
+      this.burstT -= dt;
+      if (this.burstT <= 0) {
+        this.burstT = this.phase === 3 ? 0.14 : 0.19;
+        this.burstLeft--;
+        this._fireVolley();
+      }
+    }
+
+    // torretas siguen al jugador
+    const p = this.getPlayer();
+    const local = this.group.worldToLocal(p.clone());
+    const yaw = Math.atan2(-local.x, -local.z);
+    this.turretYaw += (Math.max(-0.55, Math.min(0.55, yaw)) - this.turretYaw) * Math.min(1, dt * 8);
+    if (this.turrets) for (const tg of this.turrets) tg.rotation.y = this.turretYaw;
+  }
+
+  _fireVolley() {
+    const p = this.getPlayer();
+    for (let i = 0; i < 2; i++) {
+      const mz = this.turretMuzzles[i];
+      const origin = mz.getWorldPosition(new THREE.Vector3());
+      const target = p.clone();
+      target.x += (Math.random() - 0.5) * 2.2;
+      target.y += (Math.random() - 0.5) * 0.9;
+      target.z += (Math.random() - 0.5) * 1.4;
+      this.world.bolts.spawn(origin, target, this.def.boltSpeed, 0xff2d55, this.def.damage);
+      if (this.world.fx) this.world.fx.spark(origin, 0xff9f43, 5, 3.4, 0.22, 0.08);
+    }
+    if (this.world.fx) {
+      const p2 = this.group.position.clone();
+      this.world.fx.ring(p2, 0x49e6ff, 1.4, 0.28);
+    }
   }
 
   _move(dt, t) {
+    const p = this.getPlayer();
     const nx = this.node.pos.x, nz = this.node.pos.z;
-    if (this.dashT > 0) {
-      this.dashT -= dt;
-      const k = Math.min(1, 1 - Math.max(0, this.dashT) / this.dashDur);
-      const e = k * k * (3 - 2 * k);
-      this.group.position.x = this.dashFrom.x + (this.dashTo.x - this.dashFrom.x) * e;
-      this.group.position.z = this.dashFrom.z + (this.dashTo.z - this.dashFrom.z) * e;
-      return;
-    }
-    this.group.position.x = nx + Math.sin(t * 0.5 + this._sepSeed * 6) * 2.5;
-    this.group.position.z = nz + Math.sin(t * 0.27 + 1.4) * 1.3;
-    if (this.phase >= 2) {
-      this.dashCd = (this.dashCd === undefined ? 5.5 : this.dashCd) - dt;
-      if (this.dashCd <= 0) {
-        this.dashCd = 4.2 + Math.random() * 2.6;
-        this.dashDur = 0.42;
-        this.dashT = 0.42;
-        this.dashFrom = this.group.position.clone();
-        this.dashTo = new THREE.Vector3(nx + (Math.random() < 0.5 ? -4.2 : 4.2), this.node.pos.y + this._liftY(), nz + (Math.random() - 0.5) * 2.4);
-        if (this.world.fx) {
-          const q = this.group.position.clone();
-          q.y += 0.4;
-          this.world.fx.ring(q, 0x49e6ff, 4.6, 0.6);
-        }
-      }
-    }
+    // órbita alrededor del jugador: entra, barre de lado y se retira
+    this.rad += (this.radTarget - this.rad) * Math.min(1, dt * 1.4);
+    this.orbA += dt * this.orbDir * (this.run === 'dive' ? 0.5 : 0.3) * (this.phase === 3 ? 1.35 : 1);
+    const ox = Math.cos(this.orbA);
+    const oz = Math.sin(this.orbA);
+    const wantX = p.x + ox * this.rad;
+    const wantZ = p.z + oz * this.rad - 2.0;
+    const high = this.run === 'dive' ? 4.6 : 7.4;
+    const wantY = high + Math.sin(t * 0.8) * 0.55 + (this.run === 'enter' ? 3.4 : 0);
+
+    // suavizado con inercia: la nave pesa, no es un dron
+    const k = Math.min(1, dt * (this.run === 'dive' ? 2.1 : 1.4));
+    const prevX = this.group.position.x, prevZ = this.group.position.z;
+    this.group.position.x += (wantX - this.group.position.x) * k;
+    this.group.position.y += (wantY - this.group.position.y) * Math.min(1, dt * 1.6);
+    this.group.position.z += (wantZ - this.group.position.z) * k;
+    // el nodo sigue al grupo: la calle recicla por delante y el resto de
+    // sistemas (HUD, arena) consultan node.pos
+    this.node.pos.x = this.group.position.x;
+    this.node.pos.z = this.group.position.z;
+
+    const vx = (this.group.position.x - prevX) / Math.max(dt, 0.0001);
+    const vz = (this.group.position.z - prevZ) / Math.max(dt, 0.0001);
+    // alabeo por desplazamiento lateral y cabeceo por avance
+    const bankT = Math.max(-0.65, Math.min(0.65, -(vx * 0.12 + vz * 0.05)));
+    this.bank += (bankT - this.bank) * Math.min(1, dt * 3.2);
+    this.group.rotation.z = this.bank;
+    this.pitch += ((-vz * 0.02) - this.pitch) * Math.min(1, dt * 3);
+    this.group.rotation.x = this.pitch;
+    this.age += dt;
   }
 
-  _radial(dt) {
-    if (this.phase < 2) return;
-    this.radT = (this.radT === undefined ? 4.0 : this.radT) - dt;
-    if (this.radT > 0) return;
-    this.radT = this.phase >= 3 ? 3.4 : 5.2;
-    const origin = this.muzzle.getWorldPosition(new THREE.Vector3());
-    const p = this.getPlayer();
-    const n = this.phase >= 3 ? 12 : 9;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + this.age * 0.4;
-      const target = new THREE.Vector3(
-        p.x + Math.cos(a) * 2.2,
-        p.y + 0.15 + Math.sin(a * 2) * 0.5,
-        p.z + Math.sin(a) * 2.2
-      );
-      this.world.bolts.spawn(origin, target, this.def.boltSpeed * 1.2, 0xff2d55, this.def.damage);
-    }
-    if (this.world.fx) this.world.fx.ring(origin, 0xff2d55, 5.2, 0.55);
-    if (this.world.audio && this.world.audio.shot) this.world.audio.shot();
-  }
-
-  // Barrido de reactor. Tres tiempos: aviso (anillos + carga, sin haz), barrido
-  // de 140° con el núcleo abierto, y enfriamiento. Durante el barrido el titán
-  // no camina ni dispara ráfagas: el peligro es el haz y el premio es el núcleo.
-  _sear(dt, t) {
-    if (this.phase < 2 || this.dead) return;
-    if (this.searT <= 0) {
-      this.searCd -= dt;
-      if (this.searCd <= 0) {
-        this.searT = this.searDur;
-        this.searCue = false;
-        this.searCd = this.phase >= 3 ? 8.5 : 11.5;
-        this.state = 'cool';
-        this.st = 0;
-        this._openVent(this.searDur * 0.7);
-        if (this.world.fx) {
-          const gp = this.group.position;
-          this.world.fx.ring(new THREE.Vector3(gp.x, gp.y + 0.1, gp.z), 0xffe066, 10, 1.1);
-        }
-        if (this.world.audio && this.world.audio.waveStart) this.world.audio.waveStart();
-      }
-      return;
-    }
-
-    this.searT = Math.max(0, this.searT - dt);
-    const k = Math.min(1, 1 - this.searT / this.searDur);
-    const CHARGE = 0.34;                     // tercio inicial solo de aviso
-    const gp = this.group.position;
-    const origin = new THREE.Vector3(gp.x, gp.y + 3.15, gp.z);
-    const p = this.getPlayer();
-
-    if (k < CHARGE) {
-      if (!this.searCue) {
-        this.searCue = true;
-        const to = new THREE.Vector3(p.x - origin.x, 0, p.z - origin.z);
-        if (to.lengthSq() < 0.01) to.set(0, 0, -1);
-        this.beamAim = to.normalize();
-        if (this.world.fx) {
-          this.world.fx.ring(new THREE.Vector3(gp.x, gp.y + 0.1, gp.z), 0xff2d55, 5.5, 0.8);
-          this.world.fx.spark(origin, 0xffe066, 22, 5, 0.7, 0.14);
-        }
-        if (this.world.audio && this.world.audio.explode) this.world.audio.explode();
-      }
-      if (this.beam) this.beam.visible = false;
-      return;
-    }
-
-    // barrido: de -70° a +70° sobre la dirección apuntada al empezar
-    const s = (k - CHARGE) / (1 - CHARGE);
-    const dir = (this.beamAim || new THREE.Vector3(0, 0, -1)).clone()
-      .applyAxisAngle(new THREE.Vector3(0, 1, 0), (s - 0.5) * 2.44);
-    const LEN = 36;
-    if (this.beam) {
-      const end = origin.clone().addScaledVector(dir, LEN);
-      this.beam.visible = true;
-      this.beam.position.copy(origin).add(end).multiplyScalar(0.5);
-      this.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      this.beam.scale.set(0.55 + Math.sin(t * 22) * 0.08, LEN, 0.55 + Math.sin(t * 22) * 0.08);
-      this.beam.material.opacity = 0.72 + Math.sin(t * 26) * 0.16;
-    }
-    // el cuerpo acompaña al haz (el frente del modelo mira a -Z)
-    this.group.rotation.y = Math.atan2(-dir.x, -dir.z);
-
-    // daño por contacto con el haz: perpendicular corta y dentro del alcance
-    const rel = p.clone().sub(origin);
-    const along = rel.dot(dir);
-    const perp = rel.clone().addScaledVector(dir, -along).length();
-    if (along > 2 && along < LEN && perp < 1.7) {
-      this.beamHitT -= dt;
-      if (this.beamHitT <= 0) {
-        this.beamHitT = 0.36;
-        if (this.world.damagePlayer) this.world.damagePlayer(8);
-        if (this.world.audio && this.world.audio.playerHit) this.world.audio.playerHit();
-      }
+  hit(point, mult, dmg) {
+    if (this.state === 'die' || this.dead) return false;
+    if (this.state === 'spawn') return false;
+    const open = this.coreOpen && this.ventT > 0;
+    let m = mult;
+    if (open) {
+      // el núcleo desnudo recibe mucho más; el casco sigue aguantando
+      m = mult >= 2.6 ? mult * 1.45 : mult * 0.65;
     } else {
-      this.beamHitT = 0;
+      // escudo arriba: entra poco plomo, y el núcleo está sellado
+      m = mult >= 2.6 ? 0.06 : mult * 0.32;
     }
-
-    if (this.searT === 0) {
-      if (this.beam) this.beam.visible = false;
-      this.beamHitT = 0;
-      this._closeVent();
+    if (this.invulnT > 0) m *= 0.12;
+    this.hitFlash = 0.12;
+    if (this.world.fx) {
+      const col = open ? 0xffe066 : 0x49e6ff;
+      this.world.fx.spark(point, col, 5, 4.0, 0.28, 0.1);
+      if (m > 0.5) this.world.fx.ring(point, col, 0.9, 0.3);
     }
-  }
-
-  // ráfaga en abanico desde los dos cañones
-  _ai(dt, t) {
-    this._sear(dt, t);
-    if (this.searT > 0) {
-      // anclado: sin desplazamiento ni ráfagas; el núcleo sigue su cuenta atrás
-      this._ventTick(dt, t);
-      if (this.charge) this.charge.material.opacity = 0;
-      return;
-    }
-    this.group.rotation.y *= 0.86;
-    this._move(dt, t);
-    this._radial(dt);
-    this._ventTick(dt, t);
-    const aimT = this.aimTime;
-    if (this.state === 'aim') {
-      this.charge.material.opacity = Math.min(1, this.st / aimT) * 0.9;
-      this.charge.scale.setScalar(1.2 + Math.min(1, this.st / aimT) * 1.4);
-      if (this.st >= aimT) {
-        this.state = 'fire';
-        this.st = 0;
-        this.burstLeft = this.burstCount || this.def.burst;
-        this.burstT = 0;
-      }
-    } else if (this.state === 'fire') {
-      this.charge.material.opacity = 0;
-      this.burstT -= dt;
-      if (this.burstT <= 0 && this.burstLeft > 0) {
-        this.burstLeft--;
-        this.burstT = (this.def.burstGap || 0.18) * (this.phase >= 3 ? 0.7 : this.phase === 2 ? 0.85 : 1);
-        const base = this.getPlayer().clone();
-        const spread = this.spreadNow || this.def.spread;
-        for (let k = -1; k <= 1; k += 2) {
-          const target = base.clone();
-          target.x += k * spread * 0.9 + (Math.random() - 0.5) * spread;
-          target.y += (Math.random() - 0.3) * spread * 0.5;
-          target.z += (Math.random() - 0.5) * spread;
-          const origin = this.muzzle.getWorldPosition(new THREE.Vector3());
-          origin.x += k * 1.45;
-          this.world.bolts.spawn(origin, target, this.def.boltSpeed, 0xff9f43, this.def.damage);
-        }
-        if (this.world.audio && this.world.audio.shot) this.world.audio.shot();
-      }
-      // Al vaciar la ráfaga recarga: ahí se abre el núcleo y el titán es carne.
-      if (this.burstLeft <= 0) {
-        this.state = 'cool';
-        this.st = 0;
-        this._openVent(Math.min(1.6, this._coolT() * 0.7));
-      }
-    } else if (this.state === 'cool') {
-      if (this.st >= this._coolT()) { this.state = 'aim'; this.st = 0; this._closeVent(); }
-    }
+    return super.hit(point, m, dmg);
   }
 
   die() {
     if (this.dead) return;
-    if (this.beam) this.beam.visible = false;
-    const p = this.group.position.clone().add(new THREE.Vector3(0, 2, 0));
+    this.coreOpen = true;
+    this.core.material.color.setHex(0xffe066);
+    const p = this.group.position.clone();
     if (this.world.fx) {
-      for (let i = 0; i < 6; i++) {
+      // la nave se parte en cadena: motores, alas y núcleo
+      for (let i = 0; i < 9; i++) {
         const q = p.clone().add(new THREE.Vector3(
-          (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 1.6));
-        this.world.fx.spark(q, 0xffe066, 30, 9, 1.0, 0.22);
-        this.world.fx.ring(q, 0xff9f43, 3.2, 0.8);
+          (Math.random() - 0.5) * 7, (Math.random() - 0.5) * 2.6, (Math.random() - 0.5) * 6));
+        this.world.fx.spark(q, i % 2 ? 0xff9f43 : 0xffe066, 34, 11, 1.2, 0.3);
+        this.world.fx.ring(q, i % 2 ? 0xff2d55 : 0x49e6ff, 3.2 + Math.random() * 2, 0.9);
       }
+      this.world.fx.ring(p, 0xffffff, 14, 1.6);
+      this.world.fx.spark(p, 0xffe066, 130, 18, 1.8, 0.5);
     }
+    if (this.world.lights) { /* nada: las luces cuelgan del grupo */ }
     super.die();
   }
 
   remove() {
-    if (this.beam) {
-      this.world.scene.remove(this.beam);
-      this.beam.geometry.dispose();
-      this.beam.material.dispose();
-      this.beam = null;
-    }
     super.remove();
   }
 }
+
 
 // ----------------------------------------------------------------- proyectiles
 export class BoltField {
