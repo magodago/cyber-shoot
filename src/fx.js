@@ -20,11 +20,42 @@ function radialTexture(stops) {
 export const TEX = {
   glow: null,
   spark: null,
-  smoke: null
+  smoke: null,
+  column: null
 };
+
+// Columna de luz del portal: brillante abajo, se disuelve hacia arriba, con
+// vetas verticales que dan sensación de energía canalizada (no un cilindro liso).
+function columnTexture() {
+  const w = 128, h = 256, c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const grd = g.createLinearGradient(0, 0, 0, h);
+  grd.addColorStop(0, 'rgba(255,255,255,0)');
+  grd.addColorStop(0.28, 'rgba(255,255,255,0.16)');
+  grd.addColorStop(0.7, 'rgba(255,255,255,0.62)');
+  grd.addColorStop(0.95, 'rgba(255,255,255,0.95)');
+  grd.addColorStop(1, 'rgba(255,255,255,0.35)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, w, h);
+  // vetas: franjas verticales más intensas
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 14; i++) {
+    const x = Math.random() * w;
+    g.fillStyle = 'rgba(255,255,255,' + (0.05 + Math.random() * 0.16).toFixed(3) + ')';
+    g.fillRect(x, 0, 1 + Math.random() * 2.5, h);
+  }
+  g.globalCompositeOperation = 'source-over';
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
 
 export function initTextures() {
   if (TEX.glow) return;
+  TEX.column = columnTexture();
   TEX.glow = radialTexture([[0, 'rgba(255,255,255,1)'], [0.18, 'rgba(255,255,255,0.85)'], [0.45, 'rgba(255,255,255,0.28)'], [1, 'rgba(255,255,255,0)']]);
   TEX.spark = radialTexture([[0, 'rgba(255,255,255,1)'], [0.3, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']]);
   TEX.smoke = radialTexture([[0, 'rgba(255,255,255,0.45)'], [0.5, 'rgba(255,255,255,0.16)'], [1, 'rgba(255,255,255,0)']]);
@@ -110,6 +141,70 @@ class Ring {
   }
 }
 
+// Portal de materialización: columna de luz aditiva con vetas, disco en el
+// suelo y un aro girando. Se abre (crece), se mantiene y se cierra en ~0.7 s;
+// el bicho aparece dentro, así que nunca "pop" de la nada.
+class Portal {
+  constructor(scene) {
+    this.g = new THREE.Group();
+    this.g.visible = false;
+    scene.add(this.g);
+
+    this.colMat = new THREE.MeshBasicMaterial({
+      map: TEX.column, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false
+    });
+    this.col = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.92, 3.2, 20, 1, true), this.colMat);
+    this.col.position.y = 1.6;
+    this.g.add(this.col);
+
+    this.discMat = new THREE.MeshBasicMaterial({
+      map: TEX.glow, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false
+    });
+    this.disc = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 2.7), this.discMat);
+    this.disc.rotation.x = -Math.PI / 2;
+    this.disc.position.y = 0.05;
+    this.g.add(this.disc);
+
+    this.ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false
+    });
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.045, 6, 28), this.ringMat);
+    this.ring.position.y = 1.5;
+    this.g.add(this.ring);
+
+    this.t = 0; this.max = 1;
+  }
+  reset(pos, color, life = 0.7) {
+    this.g.position.copy(pos);
+    this.g.position.y = Math.max(0, pos.y);
+    this.colMat.color.setHex(color);
+    this.discMat.color.setHex(color);
+    this.ringMat.color.setHex(color);
+    this.t = 0; this.max = life;
+    this.g.visible = true;
+    this.g.rotation.y = Math.random() * 6.28;
+  }
+  update(dt) {
+    if (!this.g.visible) return;
+    this.t += dt;
+    const k = Math.min(1, this.t / this.max);
+    const open = k < 0.22 ? k / 0.22 : 1;              // apertura rápida
+    const close = k > 0.62 ? 1 - (k - 0.62) / 0.38 : 1;
+    const fade = open * close;
+    this.g.scale.set(1, 0.25 + 0.75 * open, 1);
+    this.colMat.opacity = 0.9 * fade;
+    this.discMat.opacity = (0.55 + 0.4 * Math.abs(Math.sin(this.t * 16))) * fade;
+    this.ringMat.opacity = 0.8 * fade;
+    this.col.rotation.y -= dt * 1.2;
+    this.ring.rotation.z += dt * 2.6;
+    this.ring.position.y = 0.5 + 1.5 * open;
+    if (k >= 1) this.g.visible = false;
+  }
+}
+
 export class FX {
   constructor(scene, maxSparks = 160) {
     initTextures();
@@ -120,7 +215,16 @@ export class FX {
     this.rings = [];
     for (let i = 0; i < 12; i++) this.rings.push(new Ring(scene));
     this.ringIdx = 0;
+    this.portals = [];
+    for (let i = 0; i < 8; i++) this.portals.push(new Portal(scene));
+    this.portalIdx = 0;
     this.bolts = [];   // los rellena el juego (proyectiles)
+  }
+
+  // portal de materialización (enemigos de a pie, refuerzos…)
+  portal(pos, color = 0x49e6ff, life = 0.7) {
+    const p = this.portals[this.portalIdx++ % this.portals.length];
+    p.reset(pos, color, life);
   }
 
   spark(pos, color, n = 6, speed = 3.4, life = 0.5, size = 0.11) {
@@ -149,6 +253,7 @@ export class FX {
   update(dt) {
     for (const s of this.sparks) s.update(dt);
     for (const r of this.rings) r.update(dt);
+    for (const p of this.portals) p.update(dt);
   }
 }
 

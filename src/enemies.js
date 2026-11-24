@@ -1091,17 +1091,24 @@ export class Boss extends Enemy {
 
   _build() {
     const plate = this._mat(new THREE.MeshStandardMaterial({
-      color: 0x2a3342, metalness: 0.92, roughness: 0.34, flatShading: true
+      color: 0x39424f, metalness: 0.95, roughness: 0.3, flatShading: true
+    }));
+    const plateHi = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x5a6675, metalness: 0.98, roughness: 0.22, flatShading: true
     }));
     const dark = this._mat(new THREE.MeshStandardMaterial({
-      color: 0x0d1119, metalness: 0.8, roughness: 0.55, flatShading: true
+      color: 0x0b0f17, metalness: 0.85, roughness: 0.5, flatShading: true
     }));
     const trim = this._mat(new THREE.MeshStandardMaterial({
-      color: 0xff9f43, metalness: 0.7, roughness: 0.3,
-      emissive: 0xff6a00, emissiveIntensity: 0.55
+      color: 0xff9f43, metalness: 0.75, roughness: 0.28,
+      emissive: 0xff6a00, emissiveIntensity: 0.7
+    }));
+    const cyan = this._mat(new THREE.MeshStandardMaterial({
+      color: 0x1b6f88, metalness: 0.6, roughness: 0.25,
+      emissive: 0x49e6ff, emissiveIntensity: 0.9
     }));
     const glow = this._mat(new THREE.MeshBasicMaterial({
-      color: 0x9fe8ff, transparent: true, opacity: 0.85,
+      color: 0x9fe8ff, transparent: true, opacity: 0.9,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     }));
     const coreMat = this._mat(new THREE.MeshBasicMaterial({
@@ -1113,130 +1120,211 @@ export class Boss extends Enemy {
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     }));
 
-    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    /* Todo el casco cuelga de `ship`, escalado en bloque: así el diseño se
+       escribe a escala 1 (cómoda) y la nave sale al doble del tamaño de un
+       dron, como una cañonera. Las cajas de impacto NO van aquí: se cuelgan
+       del grupo raíz con sus medidas ya en unidades de mundo. */
+    const SHIP = 1.6;
+    const ship = new THREE.Group();
+    ship.scale.setScalar(SHIP);
+    this.group.add(ship);
+    this.ship = ship;
+
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = ship) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
       m.rotation.set(rx, ry, rz);
-      this.group.add(m);
+      parent.add(m);
       return m;
     };
+    const box = (w, h, d, mat, x, y, z, parent = ship) =>
+      add(new THREE.BoxGeometry(w, h, d), mat, x, y, z, 0, 0, 0, parent);
 
-    /* --- casco: cuña alargada, morro afilado, paneles escalonados --- */
-    add(new THREE.CylinderGeometry(0.9, 1.5, 4.6, 6, 1), plate, 0, 0, 0, Math.PI / 2, 0, Math.PI / 6);
-    add(new THREE.CylinderGeometry(0.62, 0.9, 1.5, 6, 1), plate, 0, 0.02, -2.55, Math.PI / 2, 0, Math.PI / 6);
-    add(new THREE.ConeGeometry(0.62, 1.1, 6), trim, 0, 0.02, -3.75, -Math.PI / 2, 0, 0);
-    // dorso blindado y quilla
-    add(new THREE.BoxGeometry(1.5, 0.34, 3.6), dark, 0, 0.62, 0.1);
-    add(new THREE.BoxGeometry(0.9, 0.22, 2.2), plate, 0, 0.86, 0.35);
-    add(new THREE.BoxGeometry(1.15, 0.3, 2.4), dark, 0, -0.62, 0.15);
-    // costillas / líneas de panel
-    for (let i = 0; i < 4; i++) {
-      add(new THREE.BoxGeometry(1.7 - i * 0.12, 0.06, 0.09), trim, 0, 0.55, -1.2 + i * 0.85);
-    }
-    // entradas de aire laterales
+    /* --- fuselaje: hexágono alargado con el morro afilado --- */
+    add(new THREE.CylinderGeometry(0.86, 1.5, 4.6, 6, 1), plate, 0, 0, 0, Math.PI / 2, 0, Math.PI / 6);
+    add(new THREE.CylinderGeometry(0.6, 0.86, 1.5, 6, 1), plate, 0, 0.02, -2.55, Math.PI / 2, 0, Math.PI / 6);
+    add(new THREE.ConeGeometry(0.62, 1.3, 6), trim, 0, 0.02, -3.85, -Math.PI / 2, 0, 0);
+    // espolón del morro
+    add(new THREE.CylinderGeometry(0.05, 0.16, 0.9, 6), plateHi, 0, 0.02, -4.75, Math.PI / 2, 0, 0);
+
+    /* --- blindaje dorsal escalonado + quilla --- */
+    box(1.52, 0.34, 3.5, dark, 0, 0.6, 0.1);
+    box(1.16, 0.26, 2.5, plate, 0, 0.83, 0.35);
+    box(0.72, 0.18, 1.5, plateHi, 0, 0.97, 0.5);
+    box(1.18, 0.3, 2.4, dark, 0, -0.62, 0.15);
+    box(0.8, 0.16, 1.5, plate, 0, -0.78, 0.1);
+    // trabillas de retención sobre el lomo
     for (const sd of [-1, 1]) {
-      add(new THREE.BoxGeometry(0.1, 0.36, 1.1), dark, sd * 1.24, 0.05, -0.9);
-      add(new THREE.BoxGeometry(0.06, 0.2, 0.86), trim, sd * 1.29, 0.05, -0.9);
+      box(0.08, 0.1, 1.9, plateHi, sd * 0.62, 0.9, 0.2);
     }
 
-    /* --- alas en flecha con pods de misiles --- */
+    /* --- cordones de panel iluminados a lo largo del casco --- */
+    for (let i = 0; i < 4; i++) {
+      const zz = -1.5 + i * 0.95;
+      box(1.72 - i * 0.1, 0.055, 0.1, trim, 0, 0.52, zz);
+      box(0.55, 0.045, 0.09, cyan, 0, 0.68, zz + 0.24);
+    }
+    // rejillas laterales de refrigeración
+    for (const sd of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        box(0.07, 0.3 - i * 0.05, 0.16, dark, sd * 1.2, 0.02, -1.5 + i * 0.42);
+      }
+      box(0.1, 0.14, 1.3, trim, sd * 1.24, 0.32, -0.6);
+      // placa de blindaje lateral con remaches
+      box(0.12, 0.5, 1.6, plateHi, sd * 1.16, -0.18, 0.4);
+      for (let i = 0; i < 4; i++) {
+        box(0.05, 0.05, 0.05, dark, sd * 1.24, 0.05, -0.25 + i * 0.45);
+      }
+    }
+
+    /* --- alas en flecha: paneles, pods de misiles y luces de posición --- */
+    this.navLights = [];
+    this.navPhase = 0;
     for (const sd of [-1, 1]) {
       const wing = new THREE.Group();
-      wing.position.set(sd * 1.15, 0.05, 0.35);
+      wing.position.set(sd * 1.05, 0.05, 0.4);
       wing.rotation.y = sd * 0.42;
-      wing.rotation.z = sd * -0.12;
-      this.group.add(wing);
-      const wAdd = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
-        const m = new THREE.Mesh(geo, mat);
-        m.position.set(x, y, z); m.rotation.set(rx, ry, rz); wing.add(m); return m;
-      };
-      wAdd(new THREE.BoxGeometry(2.1, 0.13, 1.5), plate, sd * 0.95, 0, 0.1);
-      wAdd(new THREE.BoxGeometry(1.1, 0.1, 0.7), dark, sd * 2.0, 0.02, 0.28);
-      wAdd(new THREE.BoxGeometry(0.16, 0.05, 1.2), trim, sd * 0.55, 0.09, 0.05);
-      // pod de misiles
-      wAdd(new THREE.CylinderGeometry(0.2, 0.2, 1.0, 8), dark, sd * 1.8, -0.1, -0.35, Math.PI / 2, 0, 0);
-      wAdd(new THREE.CircleGeometry(0.19, 8), trim, sd * 1.8, -0.1, -0.86, 0, Math.PI, 0);
-      // aleta vertical de punta
-      wAdd(new THREE.BoxGeometry(0.07, 0.62, 0.6), plate, sd * 2.45, 0.3, 0.35);
+      wing.rotation.z = sd * -0.1;
+      ship.add(wing);
+      const w = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) =>
+        add(geo, mat, x, y, z, rx, ry, rz, wing);
+
+      w(new THREE.BoxGeometry(2.2, 0.14, 1.5), plate, sd * 1.0, 0, 0.1);
+      w(new THREE.BoxGeometry(1.2, 0.09, 0.85), plateHi, sd * 2.05, 0.02, 0.3);
+      w(new THREE.BoxGeometry(0.14, 0.06, 1.25), trim, sd * 0.55, 0.1, 0.05);
+      // listones de panel sobre el ala
+      for (let i = 0; i < 2; i++) w(new THREE.BoxGeometry(1.9, 0.03, 0.05), dark, sd * 1.0, 0.08, -0.28 + i * 0.55);
+      // pod de misiles con bocas visibles
+      w(new THREE.CylinderGeometry(0.21, 0.21, 1.1, 8), dark, sd * 1.85, -0.11, -0.3, Math.PI / 2, 0, 0);
+      w(new THREE.TorusGeometry(0.21, 0.035, 6, 12), trim, sd * 1.85, -0.11, -0.84, 0, 0, 0);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        w(new THREE.CircleGeometry(0.055, 7), cyan,
+          sd * 1.85 + Math.cos(a) * 0.1, -0.11 + Math.sin(a) * 0.1, -0.87, 0, Math.PI, 0);
+      }
+      // aleta de punta + baliza
+      w(new THREE.BoxGeometry(0.07, 0.66, 0.62), plate, sd * 2.5, 0.32, 0.4);
+      w(new THREE.BoxGeometry(0.05, 0.16, 0.16), cyan, sd * 2.5, 0.66, 0.62);
+      const navMat = this._mat(new THREE.MeshBasicMaterial({
+        color: sd < 0 ? 0xff2d55 : 0x39ff88, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+      }));
+      const nav = w(new THREE.SphereGeometry(0.1, 8, 6), navMat, sd * 2.6, 0.02, -0.15);
+      this.navLights.push(nav);
     }
 
     /* --- cabina / sensores --- */
-    const canopy = add(new THREE.SphereGeometry(0.58, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    const canopy = add(new THREE.SphereGeometry(0.58, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
       this._mat(new THREE.MeshStandardMaterial({
-        color: 0x0a2634, metalness: 1, roughness: 0.08,
-        emissive: 0x1d6f8c, emissiveIntensity: 0.6
-      })), 0, 0.5, -1.35);
-    canopy.scale.set(1, 0.8, 1.7);
-    add(new THREE.TorusGeometry(0.42, 0.05, 6, 14), trim, 0, 0.42, -2.2, Math.PI / 2 - 0.25, 0, 0);
+        color: 0x06202c, metalness: 1, roughness: 0.06,
+        emissive: 0x2a8fb0, emissiveIntensity: 0.75
+      })), 0, 0.5, -1.4);
+    canopy.scale.set(1, 0.85, 1.75);
+    add(new THREE.TorusGeometry(0.42, 0.05, 6, 16), trim, 0, 0.44, -2.25, Math.PI / 2 - 0.22, 0, 0);
     // ojo sensor frontal
-    const eye = add(new THREE.SphereGeometry(0.2, 10, 8), glow, 0, 0.24, -2.85);
+    const eye = add(new THREE.SphereGeometry(0.2, 12, 8), glow, 0, 0.24, -2.9);
     eye.scale.set(1, 0.55, 0.6);
     this.eye = eye;
+    // antenas
+    for (const sd of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.02, 0.035, 0.95, 5), dark, sd * 0.42, 1.1, 1.1, 0.22, 0, sd * 0.18);
+      add(new THREE.SphereGeometry(0.05, 6, 5), cyan, sd * 0.58, 1.55, 1.02);
+    }
 
     /* --- torretas gemelas bajo el morro --- */
     this.turrets = [];
     this.turretMuzzles = [];
+    this.muzzleGlows = [];
     for (const sd of [-1, 1]) {
       const tg = new THREE.Group();
-      tg.position.set(sd * 1.05, -0.52, -1.05);
-      this.group.add(tg);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.22, 8), dark);
+      tg.position.set(sd * 1.02, -0.5, -1.0);
+      ship.add(tg);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.24, 10), dark);
       tg.add(base);
-      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.4), plate);
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 6, 14), trim);
+      collar.rotation.x = Math.PI / 2; collar.position.y = 0.1; tg.add(collar);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.28, 0.42), plate);
       yoke.position.y = -0.22; tg.add(yoke);
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 1.25, 8), dark);
-      bar.rotation.x = Math.PI / 2; bar.position.set(0, -0.28, -0.42); tg.add(bar);
-      const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.16, 8), trim);
-      tip.rotation.x = Math.PI / 2; tip.position.set(0, -0.28, -1.0); tg.add(tip);
+      // cañón doble
+      for (const bs of [-1, 1]) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 1.3, 8), plateHi);
+        bar.rotation.x = Math.PI / 2; bar.position.set(bs * 0.12, -0.3, -0.44); tg.add(bar);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.028, 6, 10), dark);
+        ring.position.set(bs * 0.12, -0.3, -0.96); tg.add(ring);
+      }
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.2), trim);
+      tip.position.set(0, -0.3, -1.05); tg.add(tip);
       const mz = new THREE.Object3D();
-      mz.position.set(0, -0.28, -1.12);
+      mz.position.set(0, -0.3, -1.16);
       tg.add(mz);
+      // fogonazo del cañón: esfera aditiva que se enciende al disparar
+      const fl = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6),
+        this._mat(new THREE.MeshBasicMaterial({
+          color: 0xffd08a, transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+        })));
+      fl.position.copy(mz.position);
+      fl.scale.setScalar(0.01);
+      tg.add(fl);
+      this.muzzleGlows.push(fl);
       this.turrets.push(tg);
       this.turretMuzzles.push(mz);
     }
 
-    /* --- motores: tres toberas con llama viva --- */
+    /* --- motores: tres toberas con llama viva y turbina --- */
     this.flames = [];
     for (let i = 0; i < 3; i++) {
       const x = (i - 1) * 0.72;
-      add(new THREE.CylinderGeometry(0.34, 0.42, 0.7, 10), dark, x, 0.02, 2.35, Math.PI / 2, 0, 0);
-      add(new THREE.TorusGeometry(0.36, 0.05, 6, 12), trim, x, 0.02, 2.7);
+      add(new THREE.CylinderGeometry(0.3, 0.42, 0.8, 12), dark, x, 0.02, 2.4, Math.PI / 2, 0, 0);
+      add(new THREE.TorusGeometry(0.34, 0.06, 6, 14), trim, x, 0.02, 2.78);
+      const turbine = add(new THREE.CircleGeometry(0.26, 10), cyan, x, 0.02, 2.76);
+      turbine.rotation.y = Math.PI;
       const fl = new THREE.Mesh(
-        new THREE.ConeGeometry(0.28, 1.9, 8, 1, true),
+        new THREE.ConeGeometry(0.26, 2.1, 9, 1, true),
         this._mat(new THREE.MeshBasicMaterial({
           color: 0x54d8ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
           blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
         }))
       );
       fl.rotation.x = -Math.PI / 2;
-      fl.position.set(x, 0.02, 3.6);
-      this.group.add(fl);
+      fl.position.set(x, 0.02, 3.7);
+      ship.add(fl);
       this.flames.push(fl);
-      const fg = new THREE.PointLight(0x49c8ff, 1.4, 9, 2);
-      fg.position.set(x, 0.02, 3.1);
-      this.group.add(fg);
+      const fg = new THREE.PointLight(0x49c8ff, 1.5, 10, 2);
+      fg.position.set(x, 0.02, 3.2);
+      ship.add(fg);
     }
+    // carenado que une los motores
+    box(2.0, 0.24, 0.7, plate, 0, 0.32, 2.1);
+    box(0.7, 0.14, 0.5, dark, 0, 0.46, 2.35);
 
     /* --- núcleo del vientre: el punto débil, oculto tras el escudo --- */
-    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 10), coreMat);
+    this.core = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), coreMat);
     this.core.position.set(0, -0.82, -0.2);
     this.core.scale.set(1, 0.85, 1);
-    this.group.add(this.core);
-    this.coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.07, 8, 20), trim);
-    this.coreRing.position.set(0, -0.85, -0.2);
+    ship.add(this.core);
+    this.coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.08, 8, 22), trim);
+    this.coreRing.position.set(0, -0.84, -0.2);
     this.coreRing.rotation.x = Math.PI / 2;
-    this.group.add(this.coreRing);
-    this.coreLight = new THREE.PointLight(0xff7a1a, 0.6, 7, 2);
+    ship.add(this.coreRing);
+    this.coreRing2 = new THREE.Mesh(new THREE.TorusGeometry(1.02, 0.03, 6, 20), cyan);
+    this.coreRing2.position.copy(this.coreRing.position);
+    this.coreRing2.rotation.x = Math.PI / 2;
+    ship.add(this.coreRing2);
+    // cuna del núcleo, para que no parezca una bola flotando
+    box(1.5, 0.22, 1.1, dark, 0, -0.55, -0.2);
+    for (const sd of [-1, 1]) box(0.1, 0.42, 0.9, plate, sd * 0.72, -0.66, -0.2);
+    this.coreLight = new THREE.PointLight(0xff7a1a, 0.6, 8, 2);
     this.coreLight.position.set(0, -0.9, -0.2);
-    this.group.add(this.coreLight);
+    ship.add(this.coreLight);
 
-    /* --- escudo: cúpula de energía + retícula --- */
-    this.dome = new THREE.Mesh(new THREE.SphereGeometry(4.1, 20, 14), domeMat);
-    this.dome.position.set(0, 0, 0.2);
-    this.dome.scale.set(1.35, 0.72, 1.5);
+    /* --- escudo: cúpula de energía + retícula (medidas en mundo) --- */
+    this.dome = new THREE.Mesh(new THREE.SphereGeometry(4.1, 22, 16), domeMat);
+    this.dome.position.set(0, 0.2, 0.2);
+    this.dome.scale.set(1.62, 0.86, 1.86);
     this.group.add(this.dome);
     this.domeGrid = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(4.16, 1),
+      new THREE.IcosahedronGeometry(4.14, 1),
       this._mat(new THREE.MeshBasicMaterial({
         color: 0x49e6ff, wireframe: true, transparent: true, opacity: 0.16,
         blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
@@ -1246,9 +1334,9 @@ export class Boss extends Enemy {
     this.domeGrid.scale.copy(this.dome.scale);
     this.group.add(this.domeGrid);
 
-    /* --- cajas de impacto --- */
-    this.addHit(hitbox(1.5, 1, this, 'hull', 0.15, 1.0, -0.1));
-    this.addHit(hitbox(0.9, 2.6, this, 'core', -0.78, 0.85, -0.2));
+    /* --- cajas de impacto (mundo: ~1.6x el diseño base) --- */
+    this.addHit(hitbox(2.4, 1, this, 'hull', 0.35, 1.0, -0.2));
+    this.addHit(hitbox(1.5, 2.6, this, 'core', -1.35, 0.95, -0.35));
     this.muzzle = this.turretMuzzles[0];
     this.liftLocal = 0;
   }
@@ -1309,6 +1397,26 @@ export class Boss extends Enemy {
       }
     }
     if (this.eye) this.eye.material.opacity = 0.55 + Math.abs(Math.sin(t * 3.4)) * 0.4;
+    // balizas de posición: parpadeo alterno lento (roja a babor, verde a
+    // estribor) y destello blanco corto cada segundo
+    if (this.navLights) {
+      const blink = (Math.sin(t * 3.1) > 0.55) ? 1 : 0.18;
+      const strobe = (t % 1.15) < 0.07 ? 1 : 0.1;
+      for (let i = 0; i < this.navLights.length; i++) {
+        const m = this.navLights[i].material;
+        m.opacity = Math.max(blink * (i === 0 ? 0.95 : 0.7), strobe * 0.8);
+      }
+    }
+    // fogonazos de las torretas: se apagan solos
+    if (this.muzzleGlows) {
+      for (const g of this.muzzleGlows) {
+        if (g.material.opacity > 0.02) {
+          g.material.opacity = Math.max(0, g.material.opacity - dt * 9);
+          g.scale.setScalar(0.4 + g.material.opacity * 2.4);
+        }
+      }
+    }
+    if (this.coreRing2) this.coreRing2.rotation.z -= dt * 1.6;
     if (this.hitFlash > 0) this.hitFlash -= dt;
   }
 
@@ -1376,25 +1484,35 @@ export class Boss extends Enemy {
       target.y += (Math.random() - 0.5) * 0.9;
       target.z += (Math.random() - 0.5) * 1.4;
       this.world.bolts.spawn(origin, target, this.def.boltSpeed, 0xff2d55, this.def.damage);
-      if (this.world.fx) this.world.fx.spark(origin, 0xff9f43, 5, 3.4, 0.22, 0.08);
+      // fogonazo del cañón + chispas: sin esto el disparo no se veía
+      const gl = this.muzzleGlows && this.muzzleGlows[i];
+      if (gl) { gl.material.opacity = 1; gl.scale.setScalar(2.2); }
+      if (this.world.fx) this.world.fx.spark(origin, 0xffc46a, 9, 5.2, 0.34, 0.1);
     }
     if (this.world.fx) {
       const p2 = this.group.position.clone();
-      this.world.fx.ring(p2, 0x49e6ff, 1.4, 0.28);
+      this.world.fx.ring(p2, 0xff2d55, 2.2, 0.28);
     }
   }
 
   _move(dt, t) {
     const p = this.getPlayer();
     const nx = this.node.pos.x, nz = this.node.pos.z;
-    // órbita alrededor del jugador: entra, barre de lado y se retira
+    // Barrido FRONTAL dentro del corredor de la avenida.
+    // Antes orbitaba en círculo: en media vuelta quedaba a la espalda del
+    // jugador (parecía desaparecer) y con |x| hasta 20 cruzaba las fachadas.
+    // Ahora siempre va por delante, con la X acotada a la calle.
     this.rad += (this.radTarget - this.rad) * Math.min(1, dt * 1.4);
     this.orbA += dt * this.orbDir * (this.run === 'dive' ? 0.5 : 0.3) * (this.phase === 3 ? 1.35 : 1);
-    const ox = Math.cos(this.orbA);
-    const oz = Math.sin(this.orbA);
-    const wantX = p.x + ox * this.rad;
-    const wantZ = p.z + oz * this.rad - 2.0;
-    const high = this.run === 'dive' ? 4.6 : 7.4;
+    const sweep = Math.sin(this.orbA);
+    // El casco mide ~8.8 de envergadura (2.75 * SHIP 1.6): la X se acota a
+    // ±4.6 para que las alas queden dentro de la calle (asfalto 19) y nunca
+    // entren en las fachadas.
+    const lane = Math.min(3.4, this.rad * 0.2);
+    const wantX = Math.max(-4.6, Math.min(4.6, p.x + sweep * lane));
+    const depth = this.run === 'dive' ? 9 + this.rad * 0.42 : 9 + this.rad * 0.5;
+    const wantZ = Math.max(p.z - 26, Math.min(p.z - 6.5, p.z - depth - Math.sin(t * 0.5) * 1.1));
+    const high = this.run === 'dive' ? 4.8 : 7.6;
     const wantY = high + Math.sin(t * 0.8) * 0.55 + (this.run === 'enter' ? 3.4 : 0);
 
     // suavizado con inercia: la nave pesa, no es un dron

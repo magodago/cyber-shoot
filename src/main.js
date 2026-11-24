@@ -614,15 +614,22 @@ function buildLevel(level) {
   // Antes el jefe salía en la tercera oleada, después de ~25 enemigos: parecía
   // que el nivel no arrancaba y que el titán no existía.
   if (bossLevel) {
+    // Escolta antes del titán: entra con la calle ya caliente, no de golpe
+    // sobre una avenida vacía.
+    const pre = [];
+    for (let i = 0; i < 16; i++) pre.push(i % 3 === 0 ? 'wasp' : 'drone');
+    pre.push('hound', 'hound', 'crawler', 'crawler', 'sentry');
+    waves.push({ list: pre, boss: false });
     waves.push({ list: ['drone', 'wasp', 'crawler', 'hound', 'drone', 'wasp', 'crawler', 'drone', 'hound', 'wasp'], boss: true });
     return;
   }
 
-  const n = 3;
+  // 5 oleadas por sector (antes 3): cada sector pasa de ~3 min a ~6-7 min.
+  const n = 5;
   for (let w = 0; w < n; w++) {
     // la curva se aplana desde el sector 3: más robots, pero sin avalancha
     const lv = level <= 2 ? level : 2 + (level - 2) * 0.55;
-    const count = Math.round(8 + lv * 1.9 + w * 1.8);
+    const count = Math.round(10 + lv * 2.0 + w * 2.4);
     const list = [];
     for (let i = 0; i < count; i++) list.push(pickKind(level));
     // variedad forzada: siempre algo aéreo, y el centinela desde el sector 2
@@ -833,7 +840,9 @@ function spawnOne(kind) {
     const gp = e.group.position.clone();
     gp.y = Math.max(0.05, node.pos.y);
     if (fx) {
-      fx.ring(gp, 0x49e6ff, 2.4, 0.6);
+      // portal de materialización: columna + disco + aro; el enemigo emerge
+      // dentro mientras dura, así nunca aparece de la nada
+      fx.portal(gp, 0x49e6ff, 0.75);
       fx.ring(gp, 0x7a5cff, 1.3, 0.45);
       fx.spark(gp, 0x9ff6ff, 14, 3.4, 0.55, 0.09);
     }
@@ -1219,13 +1228,17 @@ function frameBody(time, xrFrame) {
 
   arena.update(dt, t);
   fx.update(dt);
-  // Disparo en ráfaga: mientras se mantiene pulsado se dispara solo; la
-  // cadencia real la marca weapon.fireDelay (ametralladora ligera).
-  if (S.mode === 'playing') {
-    if (held.L) weapon.fire('L');
-    if (held.R) weapon.fire('R');
-  }
   weapon.update(dt, xrFrame);
+  // Ametralladora con gatillo mantenido: se dispara DESPUÉS de descontar el
+  // enfriamiento y por tiempo real, así el ritmo no depende de los frames.
+  // Si un frame se alarga, se recuperan hasta 3 impactos en el mismo frame
+  // (en vez de perderlos y notar el hueco como un tirón).
+  if (S.mode === 'playing') {
+    for (const hand of ['L', 'R']) {
+      if (!held[hand]) continue;
+      for (let k = 0; k < 3; k++) if (!weapon.fire(hand)) break;
+    }
+  }
   music.update();
 
   if (S.mode === 'playing') {
@@ -1331,7 +1344,16 @@ function updateHud(force) {
     if (S.boss && !S.boss.dead) {
       bb.style.opacity = '1';
       const f = $('#boss-fill');
-      if (f) f.style.width = clamp(S.boss.hp / S.boss.maxHp, 0, 1) * 100 + '%';
+      const frac = clamp(S.boss.hp / S.boss.maxHp, 0, 1);
+      if (f) f.style.width = frac * 100 + '%';
+      const pct = $('#boss-pct');
+      if (pct) pct.textContent = Math.ceil(frac * 100) + '%';
+      const sh = $('#boss-sh');
+      if (sh) {
+        const up = S.boss.invulnT > 0;
+        sh.classList.toggle('on', up);
+        sh.textContent = up ? 'ESCUDO ACTIVO' : 'ESCUDO CAÍDO';
+      }
       const bt = $('#boss-t');
       if (bt) {
         const b = S.boss;

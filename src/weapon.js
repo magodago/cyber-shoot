@@ -535,7 +535,11 @@ export class WeaponSystem {
       return false;
     }
     h.ammo--;
-    h.cool = this.fireDelay;
+    // Cadencia anclada al TIEMPO, no al frame: se arrastra el sobrante del
+    // frame anterior (x2) en vez de reiniciar el contador. Antes, con frames
+    // que oscilaban alrededor de fireDelay, el ritmo salía irregular (0.06 /
+    // 0.09 / 0.06...) y al mantener el gatillo se notaban tirones.
+    h.cool = Math.min(this.fireDelay, h.cool + this.fireDelay);
     h.kick = 1;
     h.flashT = h.flashDur;
     h.shots++;
@@ -661,7 +665,9 @@ export class WeaponSystem {
 
     for (const hand of ['L', 'R']) {
       const h = this.hands[hand];
-      h.cool = Math.max(0, h.cool - dt);
+      // El enfriamiento puede quedar en negativo (crédito del frame) para que
+      // la cadencia se recupere exacta al disparar; se acota para no acumular.
+      h.cool = Math.max(-0.5, h.cool - dt);
       h.kick = Math.max(0, h.kick - dt * 6.5);
       h.flashT = Math.max(0, h.flashT - dt);
 
